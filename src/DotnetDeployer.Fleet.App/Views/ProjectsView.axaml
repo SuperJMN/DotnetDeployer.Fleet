@@ -104,7 +104,7 @@
                                        HorizontalAlignment="Right"
                                        VerticalAlignment="Bottom"
                                        Margin="12">
-                                <EnhancedButton ToolTip.Tip="Reset icon" Command="{Binding ResetIconCommand}">
+                                <EnhancedButton ToolTip.Tip="Use automatic icon" Command="{Binding ResetIconCommand}">
                                     <icons:Icon Value="mdi-refresh" />
                                 </EnhancedButton>
                                 <EnhancedButton ToolTip.Tip="Edit" Command="{Binding EditCommand}">

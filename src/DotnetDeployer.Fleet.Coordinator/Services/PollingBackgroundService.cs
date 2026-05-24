@@ -107,7 +107,7 @@ public class PollingBackgroundService : BackgroundService
         };
 
         project.LastPolledCommitSha = latestSha;
-        await icons.Invalidate(project.Id, ct);
+        await icons.InvalidateAuto(project.Id, ct);
 
         await storage.AddJobAsync(job, ct);
         await storage.UpdateProjectAsync(project, ct);

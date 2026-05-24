@@ -188,6 +188,12 @@ public class ProjectDetailViewLayoutTests
             .Select(button => button.Attribute("Command")?.Value)
             .Should()
             .Contain(["{Binding ResetIconCommand}", "{Binding EditCommand}", "{Binding DeleteCommand}"]);
+        actionRows.Single()
+            .Descendants(axaml + "EnhancedButton")
+            .Single(button => button.Attribute("Command")?.Value == "{Binding ResetIconCommand}")
+            .Attribute("ToolTip.Tip")?.Value
+            .Should()
+            .Be("Use automatic icon");
 
         var openCards = document.Descendants(axaml + "EnhancedButton")
             .Where(button => button.Attribute("Command")?.Value == "{Binding OpenCommand}")
