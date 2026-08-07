@@ -163,18 +163,31 @@ public class FleetApiClient
         response.EnsureSuccessStatusCode();
     }
 
-    public async Task<Project> CreateProjectAsync(string name, string gitUrl, string branch, int pollingIntervalMinutes = 0, string? gitToken = null)
+    public async Task<Project> CreateProjectAsync(
+        string name,
+        string gitUrl,
+        string branch,
+        int pollingIntervalMinutes = 0,
+        string? gitToken = null,
+        bool? runTestsBeforeDeploy = null)
     {
         var response = await http.PostAsJsonAsync("/api/projects",
-            new { name, gitUrl, branch, pollingIntervalMinutes, gitToken }, JsonOptions);
+            new { name, gitUrl, branch, pollingIntervalMinutes, gitToken, runTestsBeforeDeploy }, JsonOptions);
         response.EnsureSuccessStatusCode();
         return (await response.Content.ReadFromJsonAsync<Project>(JsonOptions))!;
     }
 
-    public async Task UpdateProjectAsync(Guid id, string? name = null, string? gitUrl = null, string? branch = null, int? pollingIntervalMinutes = null, string? gitToken = null)
+    public async Task UpdateProjectAsync(
+        Guid id,
+        string? name = null,
+        string? gitUrl = null,
+        string? branch = null,
+        int? pollingIntervalMinutes = null,
+        string? gitToken = null,
+        bool? runTestsBeforeDeploy = null)
     {
         var response = await http.PutAsJsonAsync($"/api/projects/{id}",
-            new { name, gitUrl, branch, pollingIntervalMinutes, gitToken }, JsonOptions);
+            new { name, gitUrl, branch, pollingIntervalMinutes, gitToken, runTestsBeforeDeploy }, JsonOptions);
         response.EnsureSuccessStatusCode();
     }
 

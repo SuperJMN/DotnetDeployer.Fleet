@@ -33,6 +33,10 @@
                 <TextBox Text="{Binding PollingInterval}" PlaceholderText="0" IsEnabled="{Binding !IsBusy}" />
             </StackPanel>
 
+            <CheckBox Content="Run solution tests before deployment"
+                      IsChecked="{Binding RunTestsBeforeDeploy}"
+                      IsEnabled="{Binding !IsBusy}" />
+
             <StackPanel Spacing="4">
                 <TextBlock Text="Access token (optional, for private HTTPS repos)" Opacity="0.7" FontSize="12" TextWrapping="Wrap" />
                 <TextBox Text="{Binding GitToken}"

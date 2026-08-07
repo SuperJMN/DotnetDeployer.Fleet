@@ -52,14 +52,7 @@ public static class ProjectEndpoints
 
     private static async Task<IResult> Create([FromBody] CreateProjectRequest req, IFleetStorage storage)
     {
-        var project = new Project
-        {
-            Name = req.Name,
-            GitUrl = req.GitUrl,
-            Branch = req.Branch,
-            PollingIntervalMinutes = req.PollingIntervalMinutes,
-            GitToken = string.IsNullOrWhiteSpace(req.GitToken) ? null : req.GitToken
-        };
+        var project = CreateProject(req);
 
         await storage.AddProjectAsync(project);
         return Results.Created($"/api/projects/{project.Id}", project);
@@ -75,13 +68,7 @@ public static class ProjectEndpoints
         var oldBranch = project.Branch;
         var oldGitToken = project.GitToken;
 
-        project.Name = req.Name ?? project.Name;
-        project.GitUrl = req.GitUrl ?? project.GitUrl;
-        project.Branch = req.Branch ?? project.Branch;
-        if (req.PollingIntervalMinutes.HasValue)
-            project.PollingIntervalMinutes = req.PollingIntervalMinutes.Value;
-        if (req.GitToken is not null)
-            project.GitToken = string.IsNullOrWhiteSpace(req.GitToken) ? null : req.GitToken;
+        ApplyUpdate(project, req);
 
         await storage.UpdateProjectAsync(project);
         if (!string.Equals(oldGitUrl, project.GitUrl, StringComparison.Ordinal)
@@ -245,6 +232,42 @@ public static class ProjectEndpoints
         return Results.Ok(new { deleted });
     }
 
-    public record CreateProjectRequest(string Name, string GitUrl, string Branch = "main", int PollingIntervalMinutes = 0, string? GitToken = null);
-    public record UpdateProjectRequest(string? Name, string? GitUrl, string? Branch, int? PollingIntervalMinutes, string? GitToken = null);
+    internal static Project CreateProject(CreateProjectRequest req) => new()
+    {
+        Name = req.Name,
+        GitUrl = req.GitUrl,
+        Branch = req.Branch,
+        PollingIntervalMinutes = req.PollingIntervalMinutes,
+        GitToken = string.IsNullOrWhiteSpace(req.GitToken) ? null : req.GitToken,
+        RunTestsBeforeDeploy = req.RunTestsBeforeDeploy ?? true
+    };
+
+    internal static void ApplyUpdate(Project project, UpdateProjectRequest req)
+    {
+        project.Name = req.Name ?? project.Name;
+        project.GitUrl = req.GitUrl ?? project.GitUrl;
+        project.Branch = req.Branch ?? project.Branch;
+        if (req.PollingIntervalMinutes.HasValue)
+            project.PollingIntervalMinutes = req.PollingIntervalMinutes.Value;
+        if (req.GitToken is not null)
+            project.GitToken = string.IsNullOrWhiteSpace(req.GitToken) ? null : req.GitToken;
+        if (req.RunTestsBeforeDeploy.HasValue)
+            project.RunTestsBeforeDeploy = req.RunTestsBeforeDeploy.Value;
+    }
+
+    public record CreateProjectRequest(
+        string Name,
+        string GitUrl,
+        string Branch = "main",
+        int PollingIntervalMinutes = 0,
+        string? GitToken = null,
+        bool? RunTestsBeforeDeploy = null);
+
+    public record UpdateProjectRequest(
+        string? Name,
+        string? GitUrl,
+        string? Branch,
+        int? PollingIntervalMinutes,
+        string? GitToken = null,
+        bool? RunTestsBeforeDeploy = null);
 }

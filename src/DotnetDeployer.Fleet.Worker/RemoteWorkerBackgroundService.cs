@@ -278,30 +278,76 @@ public class RemoteWorkerBackgroundService : BackgroundService
 
                 var deployerArguments = BuildDeployerArguments(job, packageOutputDir);
 
-                await Log(job.Kind == JobKind.PackageBuild
-                    ? "=== Invoking DotnetDeployer (package-only) ==="
-                    : "=== Invoking DotnetDeployer ===");
+                async Task<(bool Success, string? Error)> RunSolutionTestsAsync(CancellationToken token)
+                {
+                    await Log("=== Running solution tests ===");
+                    await EmitPhaseAsync(job.Id, PhaseEventKind.Start, "worker.solution.test", ct: token);
+                    var testSw = System.Diagnostics.Stopwatch.StartNew();
+                    (bool Success, string? Error) result = (false, null);
 
-                // worker.deployer.invoke wraps the entire DotnetDeployer process. The
-                // marker stream parsed by DeployerRunner produces nested phases
-                // (version.resolve, package.generate.*, github.release.upload, …)
-                // that the coordinator persists alongside this one.
-                await EmitPhaseAsync(job.Id, PhaseEventKind.Start, "worker.deployer.invoke",
-                    ct: jobCt);
-                var deploySw = System.Diagnostics.Stopwatch.StartNew();
+                    try
+                    {
+                        result = await SolutionTestRunner.RunAsync(
+                            localPath,
+                            onLine: line => logBuffer.AppendAsync(line),
+                            envVars: envVars,
+                            ct: token);
 
-                var (success, error) = await DeployerRunner.RunAsync(
-                    localPath,
-                    onLine: line => logBuffer.AppendAsync(line),
-                    arguments: deployerArguments,
-                    envVars: envVars,
-                    onPhase: ev => jobSource.PostJobPhaseAsync(job.Id, ev, jobCt),
-                    ct: jobCt);
+                        await Log(result.Success
+                            ? "=== Solution tests SUCCEEDED ==="
+                            : $"=== Solution tests FAILED: {result.Error} ===");
+                        return result;
+                    }
+                    finally
+                    {
+                        testSw.Stop();
+                        await EmitPhaseAsync(job.Id, PhaseEventKind.End, "worker.solution.test",
+                            status: result.Success ? PhaseStatus.Ok : PhaseStatus.Fail,
+                            durationMs: testSw.ElapsedMilliseconds, ct: token);
+                        await logBuffer.FlushAsync();
+                    }
+                }
 
-                deploySw.Stop();
-                await EmitPhaseAsync(job.Id, PhaseEventKind.End, "worker.deployer.invoke",
-                    status: success ? PhaseStatus.Ok : PhaseStatus.Fail,
-                    durationMs: deploySw.ElapsedMilliseconds, ct: jobCt);
+                async Task<(bool Success, string? Error)> RunDeployerAsync(CancellationToken token)
+                {
+                    await Log(job.Kind == JobKind.PackageBuild
+                        ? "=== Invoking DotnetDeployer (package-only) ==="
+                        : "=== Invoking DotnetDeployer ===");
+
+                    // worker.deployer.invoke wraps the entire DotnetDeployer process. The
+                    // marker stream parsed by DeployerRunner produces nested phases
+                    // (version.resolve, package.generate.*, github.release.upload, …)
+                    // that the coordinator persists alongside this one.
+                    await EmitPhaseAsync(job.Id, PhaseEventKind.Start, "worker.deployer.invoke", ct: token);
+                    var deploySw = System.Diagnostics.Stopwatch.StartNew();
+                    (bool Success, string? Error) result = (false, null);
+
+                    try
+                    {
+                        result = await DeployerRunner.RunAsync(
+                            localPath,
+                            onLine: line => logBuffer.AppendAsync(line),
+                            arguments: deployerArguments,
+                            envVars: envVars,
+                            onPhase: ev => jobSource.PostJobPhaseAsync(job.Id, ev, token),
+                            ct: token);
+                        return result;
+                    }
+                    finally
+                    {
+                        deploySw.Stop();
+                        await EmitPhaseAsync(job.Id, PhaseEventKind.End, "worker.deployer.invoke",
+                            status: result.Success ? PhaseStatus.Ok : PhaseStatus.Fail,
+                            durationMs: deploySw.ElapsedMilliseconds, ct: token);
+                    }
+                }
+
+                var (success, error) = await WorkerDeploymentPipeline.RunAsync(
+                    job,
+                    project,
+                    RunSolutionTestsAsync,
+                    RunDeployerAsync,
+                    jobCt);
 
                 await logBuffer.FlushAsync();
 

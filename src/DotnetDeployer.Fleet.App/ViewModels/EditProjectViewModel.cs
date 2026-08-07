@@ -20,6 +20,7 @@ public partial class EditProjectViewModel : ReactiveObject
     [Reactive] private string _branch;
     [Reactive] private string _pollingInterval;
     [Reactive] private string _gitToken;
+    [Reactive] private bool _runTestsBeforeDeploy;
     [Reactive] private string? _error;
     [Reactive] private bool _isBusy;
 
@@ -36,6 +37,7 @@ public partial class EditProjectViewModel : ReactiveObject
         _pollingInterval = project.PollingIntervalMinutes.ToString();
         _originalToken = project.GitToken ?? string.Empty;
         _gitToken = _originalToken;
+        _runTestsBeforeDeploy = project.RunTestsBeforeDeploy;
 
         var canSave = this.WhenAnyValue(
             x => x.Name, x => x.GitUrl, x => x.Branch,
@@ -73,7 +75,8 @@ public partial class EditProjectViewModel : ReactiveObject
                 gitUrl: GitUrl,
                 branch: Branch,
                 pollingIntervalMinutes: polling,
-                gitToken: tokenToSend);
+                gitToken: tokenToSend,
+                runTestsBeforeDeploy: RunTestsBeforeDeploy);
 
             _projects?.RefreshCommand.Execute(Unit.Default).Subscribe();
             await _navigator.GoBack();

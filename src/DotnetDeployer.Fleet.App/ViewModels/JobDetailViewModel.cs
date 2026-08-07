@@ -180,11 +180,12 @@ public partial class JobDetailViewModel : ReactiveObject, IHaveHeader, IDisposab
     /// (e.g. "Package · deb · x64"). Keeps the UI readable without forcing
     /// the backend to localise.
     /// </summary>
-    private static string FormatPhaseName(string name)
+    internal static string FormatPhaseName(string name)
     {
         return name switch
         {
             "worker.git.clone" => "Cloning repository",
+            "worker.solution.test" => "Running solution tests",
             "worker.deployer.invoke" => "Running DotnetDeployer",
             "worker.artifacts.upload" => "Uploading package artifacts",
             "version.resolve" => "Resolving version",

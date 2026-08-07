@@ -176,6 +176,8 @@ public static class CoordinatorHostBuilder
             await db.Database.ExecuteSqlRawAsync("ALTER TABLE \"Projects\" ADD COLUMN \"GitToken\" TEXT NULL");
         }
 
+        await EnsureRunTestsBeforeDeployColumnAsync(db);
+
         var hasCancellationRequestedAt = (await db.Database
             .SqlQueryRaw<long>("SELECT COUNT(*) AS \"Value\" FROM pragma_table_info('DeploymentJobs') WHERE name='CancellationRequestedAt'")
             .ToListAsync()).FirstOrDefault() > 0;
@@ -309,6 +311,18 @@ public static class CoordinatorHostBuilder
         {
             await db.Database.ExecuteSqlRawAsync(
                 $"ALTER TABLE \"Workers\" ADD COLUMN \"{columnName}\" {columnDefinition}");
+        }
+    }
+
+    internal static async Task EnsureRunTestsBeforeDeployColumnAsync(FleetDbContext db)
+    {
+        var exists = (await db.Database
+            .SqlQueryRaw<long>("SELECT COUNT(*) AS \"Value\" FROM pragma_table_info('Projects') WHERE name='RunTestsBeforeDeploy'")
+            .ToListAsync()).FirstOrDefault() > 0;
+        if (!exists)
+        {
+            await db.Database.ExecuteSqlRawAsync(
+                "ALTER TABLE \"Projects\" ADD COLUMN \"RunTestsBeforeDeploy\" INTEGER NOT NULL DEFAULT 1");
         }
     }
 

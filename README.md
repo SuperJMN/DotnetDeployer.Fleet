@@ -92,13 +92,15 @@ You now have managed remote execution for DotnetDeployer. Add projects from the 
 1. **Add a project** — paste a Git URL and branch in the Desktop App (or call the API).
 2. **Trigger a deploy** — click *Deploy Now* or let automatic polling detect new commits.
 3. **A worker claims the job** — atomic claim ensures only one worker wins, even under contention.
-4. **Clone and deploy** — the worker clones (or fetches) the repo with full history, then runs `dnx dotnetdeployer.tool -y`.
+4. **Clone, test and deploy** — the worker clones (or fetches) the repo with full history, tests its root solution by default, then runs `dnx dotnetdeployer.tool -y`.
 5. **Live logs** — the coordinator streams log lines via SSE; the Desktop App shows them in real time.
 6. **Repo cache** — cloned repos stay on disk for faster subsequent deploys; an LRU policy prevents disk exhaustion.
 
 ### Requirements for Target Repos
 
 Each repo you deploy must contain a **`deployer.yaml`** at the root. See the [DotnetDeployer docs](https://github.com/SuperJMN/DotnetDeployer) for the format.
+
+Deployment projects run solution tests by default. The repository root must contain exactly one `.slnx` or `.sln` file; Fleet runs a best-effort `dotnet workload restore <solution>` followed by `dotnet test <solution> -c Release --nologo`. A failing test command stops the deployment before DotnetDeployer starts. Disable **Run solution tests before deployment** when creating or editing a project to opt out. Package-only builds do not run this test gate.
 
 > The worker runs `dnx dotnetdeployer.tool -y` — .NET 10's `dnx` downloads and caches the tool automatically. No global install or tool manifest needed.
 
@@ -597,7 +599,7 @@ Each worker runs an independent loop:
 2. **Login** — exchange `(workerId, secret)` for a JWT (cached, refreshed on 401 or near-expiry).
 3. **Heartbeat** — `POST /heartbeat` on a timer so the coordinator knows it's alive.
 4. **Poll** — `POST /api/queue/next` every `PollIntervalSeconds`; claims are atomic.
-5. **Execute** — clone or fetch with full history, then run `dnx dotnetdeployer.tool -y`.
+5. **Execute** — clone or fetch with full history, run the root solution tests when enabled, then run `dnx dotnetdeployer.tool -y`.
 6. **Stream** — stdout/stderr line by line, report final status.
 
 ### Disk Management
