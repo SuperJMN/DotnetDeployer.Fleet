@@ -32,6 +32,14 @@ public class AddProjectViewModelTests
     }
 
     [Fact]
+    public void Solution_tests_are_enabled_by_default()
+    {
+        var vm = CreateViewModel();
+
+        vm.RunTestsBeforeDeploy.Should().BeTrue();
+    }
+
+    [Fact]
     public async Task TrySaveAsync_ShouldRejectMissingRequiredFields()
     {
         var vm = CreateViewModel();

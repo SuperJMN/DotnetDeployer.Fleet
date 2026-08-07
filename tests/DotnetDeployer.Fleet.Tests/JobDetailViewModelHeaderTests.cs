@@ -53,6 +53,13 @@ public sealed class JobDetailViewModelHeaderTests
         action.IsSecondaryCommand.Should().BeFalse();
     }
 
+    [Fact]
+    public void Solution_test_phase_has_a_readable_label()
+    {
+        JobDetailViewModel.FormatPhaseName("worker.solution.test")
+            .Should().Be("Running solution tests");
+    }
+
     private static JobDetailViewModel CreateViewModel(DeploymentJob job)
     {
         var client = CreateClient(job);

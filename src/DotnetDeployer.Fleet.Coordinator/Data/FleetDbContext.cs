@@ -33,6 +33,9 @@ public class FleetDbContext : DbContext
         {
             e.HasKey(p => p.Id);
             e.HasIndex(p => p.Name);
+            e.Property(p => p.RunTestsBeforeDeploy)
+                .HasDefaultValue(true)
+                .HasSentinel(true);
         });
 
         modelBuilder.Entity<DeploymentJob>(e =>

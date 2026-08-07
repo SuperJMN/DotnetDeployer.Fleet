@@ -16,6 +16,12 @@ public class Project
     /// <summary>Minutes between automatic polling checks. 0 = disabled.</summary>
     public int PollingIntervalMinutes { get; set; } = 0;
 
+    /// <summary>
+    /// Whether deployment jobs must run the repository's root solution tests before
+    /// invoking DotnetDeployer. Package build jobs never run this test gate.
+    /// </summary>
+    public bool RunTestsBeforeDeploy { get; set; } = true;
+
     public string? LastPolledCommitSha { get; set; }
     public DateTimeOffset? LastPolledAt { get; set; }
     public DateTimeOffset CreatedAt { get; set; } = DateTimeOffset.UtcNow;
