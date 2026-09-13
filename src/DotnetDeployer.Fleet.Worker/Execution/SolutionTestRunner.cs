@@ -90,7 +90,7 @@ internal static class SolutionTestRunner
         {
             var test = DeployerRunner.CreateDotnetProcessStartInfo(
                 workingDirectory,
-                ["test", solution, "-c", "Release", "--nologo"],
+                ["test", solution, "-c", "Release", "--nologo", "-m:1"],
                 envVars);
 
             var testExitCode = await processRunner.RunAsync(test, onLine, ct);

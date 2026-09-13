@@ -72,7 +72,7 @@ public sealed class SolutionTestRunnerTests : IDisposable
         processRunner.Commands.Should().HaveCount(2);
         processRunner.Commands[0].Arguments.Should().Equal("workload", "restore", solution);
         processRunner.Commands[1].Arguments.Should().Equal(
-            "test", solution, "-c", "Release", "--nologo");
+            "test", solution, "-c", "Release", "--nologo", "-m:1");
         processRunner.Commands.Should().OnlyContain(command => command.WorkingDirectory == repositoryRoot);
         processRunner.Commands.Should().OnlyContain(command => command.Environment["DEPLOY_TOKEN"] == "secret-value");
         processRunner.Commands.Should().OnlyContain(command => command.Environment["UseSharedCompilation"] == "false");
