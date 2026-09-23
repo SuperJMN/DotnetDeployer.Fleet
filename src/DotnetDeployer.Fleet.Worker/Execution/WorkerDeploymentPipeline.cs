@@ -43,12 +43,11 @@ internal static class WorkerDeploymentPipeline
     /// 2. Solution test gate (if configured)
     /// 3. Package generation (pack)
     /// 4. Package inventory verification
-    /// 5. NuGet package push
-    /// 6. Additional publication (e.g. GitHub release)
-    /// 
-    /// Note: Publication across multiple targets (e.g. NuGet feed followed by GitHub release)
-    /// is sequential and NOT atomic. If GitHub release fails after packages have been pushed
-    /// to the NuGet feed, the pushed packages remain published in the feed (partial release).
+    /// 5. Single publication target execution (e.g. NuGet package push OR GitHub release)
+    ///
+    /// Note: Multi-target publication (e.g. NuGet push AND GitHub release in the same pipeline)
+    /// is rejected fail-closed because independent external APIs cannot be committed atomically,
+    /// risking irreversible partial publication if a subsequent destination fails.
     /// </summary>
     internal static async Task<(bool Success, string? Error)> RunReleasePipelineAsync(
         DeploymentJob job,
@@ -57,10 +56,15 @@ internal static class WorkerDeploymentPipeline
         Func<CancellationToken, Task<(bool Success, string? Error)>> runSolutionTests,
         Func<CancellationToken, Task<(bool Success, string? Error, IReadOnlyList<string> ProducedPackagePaths)>> runPack,
         Func<IReadOnlyList<string>, CancellationToken, Task<(bool Success, string? Error)>> verifyInventory,
-        Func<IReadOnlyList<string>, CancellationToken, Task<(bool Success, string? Error)>> runPush,
+        Func<IReadOnlyList<string>, CancellationToken, Task<(bool Success, string? Error)>>? runPush = null,
         Func<CancellationToken, Task<(bool Success, string? Error)>>? runAdditionalPublish = null,
         CancellationToken ct = default)
     {
+        if (runPush is not null && runAdditionalPublish is not null)
+        {
+            return (false, "Mixed release deployment rejected: multiple publishing destinations (NuGet push and additional publish) cannot be executed atomically across independent external APIs, risking irreversible partial publication. Configure only a single destination per release pipeline.");
+        }
+
         var buildResult = await runSolutionBuild(ct);
         if (!buildResult.Success)
             return buildResult;
@@ -80,9 +84,12 @@ internal static class WorkerDeploymentPipeline
         if (!verifyResult.Success)
             return verifyResult;
 
-        var pushResult = await runPush(packResult.ProducedPackagePaths, ct);
-        if (!pushResult.Success)
-            return pushResult;
+        if (runPush is not null)
+        {
+            var pushResult = await runPush(packResult.ProducedPackagePaths, ct);
+            if (!pushResult.Success)
+                return pushResult;
+        }
 
         if (runAdditionalPublish is not null)
         {
@@ -100,7 +107,7 @@ internal static class WorkerDeploymentPipeline
         Func<CancellationToken, Task<(bool Success, string? Error)>> runSolutionTests,
         Func<CancellationToken, Task<(bool Success, string? Error, IReadOnlyList<string> ProducedPackagePaths)>> runPack,
         Func<IReadOnlyList<string>, CancellationToken, Task<(bool Success, string? Error)>> verifyInventory,
-        Func<IReadOnlyList<string>, CancellationToken, Task<(bool Success, string? Error)>> runPush,
+        Func<IReadOnlyList<string>, CancellationToken, Task<(bool Success, string? Error)>>? runPush = null,
         CancellationToken ct = default) =>
         RunReleasePipelineAsync(
             job,

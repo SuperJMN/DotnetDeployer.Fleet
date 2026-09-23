@@ -334,6 +334,15 @@ public class RemoteWorkerBackgroundService : BackgroundService
                     githubToken = tokenFromGh;
                 }
 
+                if (job.Kind == JobKind.Deploy && nugetConfig.Enabled && githubConfig.Enabled)
+                {
+                    var msg = "Mixed release deployment rejected: both NuGet and GitHub publishing destinations are enabled in deployer.yaml. Multi-destination deployment cannot be executed atomically across independent external APIs (NuGet and GitHub), risking irreversible partial publication if a destination fails. Configure jobs with a single publishing destination (either NuGet or GitHub), or separate package publishing and GitHub releases into distinct deployment jobs.";
+                    await Log($"=== FAILED: {msg} ===");
+                    await logBuffer.FlushAsync();
+                    await jobSource.ReportJobCompletedAsync(job.Id, false, msg, ct);
+                    return;
+                }
+
                 var isPackageRelease = job.Kind == JobKind.Deploy && (nugetConfig.Enabled || project.ExpectedPackageIds.Count > 0);
 
                 if (isPackageRelease && project.ExpectedPackageIds.Count == 0)
@@ -707,7 +716,7 @@ public class RemoteWorkerBackgroundService : BackgroundService
                         RunSolutionTestsAsync,
                         RunPackAsync,
                         VerifyInventoryAsync,
-                        nugetConfig.Enabled ? RunPushAsync : (_, _) => Task.FromResult<(bool, string?)>((true, null)),
+                        nugetConfig.Enabled ? RunPushAsync : null,
                         githubConfig.Enabled ? RunGitHubDeployAsync : null,
                         jobCt);
                     success = releaseResult.Success;

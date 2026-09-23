@@ -695,12 +695,12 @@ public sealed class ReleaseJobsStagingDemonstrationTests : IDisposable
         }
     }
 
-    private sealed class InlineFactory(DbContextOptions<FleetDbContext> options) : IDbContextFactory<FleetDbContext>
+    internal sealed class InlineFactory(DbContextOptions<FleetDbContext> options) : IDbContextFactory<FleetDbContext>
     {
         public FleetDbContext CreateDbContext() => new(options);
     }
 
-    private sealed class DirectStorageWorkerCoordinatorClient(IFleetStorage storage) : IWorkerCoordinatorClient
+    internal sealed class DirectStorageWorkerCoordinatorClient(IFleetStorage storage) : IWorkerCoordinatorClient
     {
         public Task<Worker?> GetSelfAsync(CancellationToken ct = default) => storage.GetWorkerAsync(Guid.Empty, ct);
         public Task SendHeartbeatAsync(Guid workerId, CancellationToken ct = default) => SendHeartbeatAsync(workerId, null, ct);
@@ -734,7 +734,7 @@ public sealed class ReleaseJobsStagingDemonstrationTests : IDisposable
         public Task DeleteRepoCacheAsync(Guid workerId, Guid cacheId, CancellationToken ct = default) => storage.DeleteRepoCacheAsync(cacheId, ct);
     }
 
-    private sealed class DirectStorageWorkerJobSource(IFleetStorage storage, PackageArtifactStore artifactStore) : IWorkerJobSource
+    internal sealed class DirectStorageWorkerJobSource(IFleetStorage storage, PackageArtifactStore artifactStore) : IWorkerJobSource
     {
         public Task<DeploymentJob?> GetNextJobAsync(Guid workerId, CancellationToken ct = default)
             => storage.GetNextAssignedJobForWorkerAsync(workerId, ct);

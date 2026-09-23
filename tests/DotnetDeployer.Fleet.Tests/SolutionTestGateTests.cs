@@ -261,7 +261,29 @@ public sealed class SolutionTestGateTests
     }
 
     [Fact]
-    public async Task Mixed_deployment_executes_build_test_pack_verify_nuget_and_github_in_order()
+    public async Task ReleasePipeline_rejects_mixed_deployment_before_any_build_test_pack_or_publish()
+    {
+        var job = new DeploymentJob { Kind = JobKind.Deploy };
+        var project = new Project { RunTestsBeforeDeploy = true, ExpectedPackageIds = ["Pkg.A"] };
+        var anyStepInvoked = false;
+
+        var result = await WorkerDeploymentPipeline.RunReleasePipelineAsync(
+            job,
+            project,
+            runSolutionBuild: _ => { anyStepInvoked = true; return Task.FromResult<(bool, string?)>((true, null)); },
+            runSolutionTests: _ => { anyStepInvoked = true; return Task.FromResult<(bool, string?)>((true, null)); },
+            runPack: _ => { anyStepInvoked = true; return Task.FromResult<(bool, string?, IReadOnlyList<string>)>((true, null, ["pkg.nupkg"])); },
+            verifyInventory: (_, _) => { anyStepInvoked = true; return Task.FromResult<(bool, string?)>((true, null)); },
+            runPush: (_, _) => { anyStepInvoked = true; return Task.FromResult<(bool, string?)>((true, null)); },
+            runAdditionalPublish: _ => { anyStepInvoked = true; return Task.FromResult<(bool, string?)>((true, null)); });
+
+        result.Success.Should().BeFalse();
+        result.Error.Should().Contain("Mixed release deployment rejected");
+        anyStepInvoked.Should().BeFalse("No build, test, pack, or publish steps should execute when mixed release targets are configured");
+    }
+
+    [Fact]
+    public async Task Single_target_nuget_deployment_executes_build_test_pack_verify_and_push_in_order()
     {
         var job = new DeploymentJob { Kind = JobKind.Deploy };
         var project = new Project { RunTestsBeforeDeploy = true, ExpectedPackageIds = ["Pkg.A"] };
@@ -275,35 +297,30 @@ public sealed class SolutionTestGateTests
             runPack: _ => { stages.Add("pack"); return Task.FromResult<(bool, string?, IReadOnlyList<string>)>((true, null, ["pkg.nupkg"])); },
             verifyInventory: (_, _) => { stages.Add("verify"); return Task.FromResult<(bool, string?)>((true, null)); },
             runPush: (_, _) => { stages.Add("nuget.push"); return Task.FromResult<(bool, string?)>((true, null)); },
-            runAdditionalPublish: _ => { stages.Add("github.deploy"); return Task.FromResult<(bool, string?)>((true, null)); });
+            runAdditionalPublish: null);
 
         result.Success.Should().BeTrue();
-        stages.Should().Equal("build", "tests", "pack", "verify", "nuget.push", "github.deploy");
+        stages.Should().Equal("build", "tests", "pack", "verify", "nuget.push");
     }
 
     [Fact]
-    public async Task Mixed_deployment_halts_at_nuget_failure_without_deploying_github()
+    public async Task Single_target_github_deployment_with_packages_executes_in_order()
     {
         var job = new DeploymentJob { Kind = JobKind.Deploy };
         var project = new Project { RunTestsBeforeDeploy = true, ExpectedPackageIds = ["Pkg.A"] };
-        var githubInvoked = false;
+        var stages = new List<string>();
 
         var result = await WorkerDeploymentPipeline.RunReleasePipelineAsync(
             job,
             project,
-            runSolutionBuild: _ => Task.FromResult<(bool, string?)>((true, null)),
-            runSolutionTests: _ => Task.FromResult<(bool, string?)>((true, null)),
-            runPack: _ => Task.FromResult<(bool, string?, IReadOnlyList<string>)>((true, null, ["pkg.nupkg"])),
-            verifyInventory: (_, _) => Task.FromResult<(bool, string?)>((true, null)),
-            runPush: (_, _) => Task.FromResult<(bool, string?)>((false, "nuget 403 forbidden")),
-            runAdditionalPublish: _ =>
-            {
-                githubInvoked = true;
-                return Task.FromResult<(bool, string?)>((true, null));
-            });
+            runSolutionBuild: _ => { stages.Add("build"); return Task.FromResult<(bool, string?)>((true, null)); },
+            runSolutionTests: _ => { stages.Add("tests"); return Task.FromResult<(bool, string?)>((true, null)); },
+            runPack: _ => { stages.Add("pack"); return Task.FromResult<(bool, string?, IReadOnlyList<string>)>((true, null, ["pkg.nupkg"])); },
+            verifyInventory: (_, _) => { stages.Add("verify"); return Task.FromResult<(bool, string?)>((true, null)); },
+            runPush: null,
+            runAdditionalPublish: _ => { stages.Add("github.deploy"); return Task.FromResult<(bool, string?)>((true, null)); });
 
-        result.Success.Should().BeFalse();
-        result.Error.Should().Be("nuget 403 forbidden");
-        githubInvoked.Should().BeFalse("GitHub deployment must NEVER run if NuGet push fails");
+        result.Success.Should().BeTrue();
+        stages.Should().Equal("build", "tests", "pack", "verify", "github.deploy");
     }
 }
