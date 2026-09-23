@@ -1,32 +1,12 @@
 namespace DotnetDeployer.Fleet.WorkerService.Execution;
 
-internal static class SolutionTestRunner
+internal static class SolutionBuildRunner
 {
-    private const string OptOutLabel = "Run solution tests before deployment";
-
-    internal static string DiscoverRootSolution(string repositoryRoot) =>
-        SolutionDiscovery.DiscoverRootSolution(repositoryRoot);
-
     internal static Task<(bool Success, string? Error)> RunAsync(
         string workingDirectory,
         Func<string, Task> onLine,
         IReadOnlyDictionary<string, string>? envVars = null,
-        CancellationToken ct = default)
-    {
-        return RunAsync(
-            workingDirectory,
-            onLine,
-            envVars,
-            null,
-            StreamingProcessRunner.Instance,
-            ct);
-    }
-
-    internal static Task<(bool Success, string? Error)> RunAsync(
-        string workingDirectory,
-        Func<string, Task> onLine,
-        IReadOnlyDictionary<string, string>? envVars,
-        IEnumerable<string>? scrubKeys,
+        IEnumerable<string>? scrubKeys = null,
         CancellationToken ct = default)
     {
         return RunAsync(
@@ -65,7 +45,7 @@ internal static class SolutionTestRunner
         string solution;
         try
         {
-            solution = DiscoverRootSolution(workingDirectory);
+            solution = SolutionDiscovery.DiscoverRootSolution(workingDirectory);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
@@ -73,7 +53,7 @@ internal static class SolutionTestRunner
         }
 
         var solutionName = Path.GetFileName(solution);
-        await onLine($"Solution test target: {solutionName}");
+        await onLine($"Solution build target: {solutionName}");
 
         try
         {
@@ -87,7 +67,7 @@ internal static class SolutionTestRunner
             if (restoreExitCode != 0)
             {
                 await onLine(
-                    $"[WARN] dotnet workload restore exited with code {restoreExitCode}; continuing to dotnet test.");
+                    $"[WARN] dotnet workload restore exited with code {restoreExitCode}; continuing to dotnet build.");
             }
         }
         catch (OperationCanceledException)
@@ -96,21 +76,21 @@ internal static class SolutionTestRunner
         }
         catch (Exception ex)
         {
-            await onLine($"[WARN] dotnet workload restore failed: {ex.Message}; continuing to dotnet test.");
+            await onLine($"[WARN] dotnet workload restore failed: {ex.Message}; continuing to dotnet build.");
         }
 
         try
         {
-            var test = DeployerRunner.CreateDotnetProcessStartInfo(
+            var build = DeployerRunner.CreateDotnetProcessStartInfo(
                 workingDirectory,
-                ["test", solution, "-c", "Release", "--nologo", "-m:1"],
+                ["build", solution, "-c", "Release", "--nologo"],
                 envVars,
                 scrubKeys);
 
-            var testExitCode = await processRunner.RunAsync(test, onLine, ct);
-            return testExitCode == 0
+            var buildExitCode = await processRunner.RunAsync(build, onLine, ct);
+            return buildExitCode == 0
                 ? (true, null)
-                : (false, $"dotnet test exited with code {testExitCode}");
+                : (false, $"dotnet build exited with code {buildExitCode}");
         }
         catch (OperationCanceledException)
         {
@@ -118,7 +98,7 @@ internal static class SolutionTestRunner
         }
         catch (Exception ex)
         {
-            return (false, $"Could not run dotnet test: {ex.Message}");
+            return (false, $"Could not run dotnet build: {ex.Message}");
         }
     }
 }

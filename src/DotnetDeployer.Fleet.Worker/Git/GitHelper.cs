@@ -32,56 +32,7 @@ public static class GitHelper
                 await RunGitAsync(["remote", "set-url", "origin", effectiveUrl], localPath, log, ct);
 
             await RunGitAsync(["fetch", "--all", "--tags", "--recurse-submodules", "--prune"], localPath, log, ct);
-
-            if (!string.IsNullOrWhiteSpace(targetCommitSha))
-            {
-                try
-                {
-                    await RunGitAsync(["fetch", "origin", targetCommitSha], localPath, log, ct);
-                }
-                catch
-                {
-                    // Fall back to existing fetched objects if direct fetch fails
-                }
-                await RunGitAsync(["checkout", "--detach", targetCommitSha], localPath, log, ct);
-            }
-            else
-            {
-                await RunGitAsync(["checkout", branch], localPath, log, ct);
-                await RunGitAsync(["reset", "--hard", $"origin/{branch}"], localPath, log, ct);
-            }
-
-            // Move every submodule HEAD to the commit recorded in the (just-updated) parent
-            // tree. `git fetch --recurse-submodules` only downloads objects; it does NOT
-            // advance the working tree of the submodules, and neither does `reset --hard`
-            // on the parent. Without an explicit `submodule update`, a submodule cloned at
-            // commit A stays on A forever, even if the parent now points at B — leading to
-            // builds against stale source (e.g. missing APIs added in B).
-            // `sync` first in case the submodule URL changed, `--force` to discard any
-            // working-tree changes inside the submodule.
-            await RunGitAsync(["submodule", "sync", "--recursive"], localPath, log, ct);
-            await RunGitAsync(["submodule", "update", "--init", "--recursive", "--force"], localPath, log, ct);
-
-            // Wipe untracked/ignored files (bin/, obj/, generated artifacts, NuGet caches
-            // local to the project, etc.) so every job starts from a state equivalent
-            // to a fresh clone.
-            await RunGitAsync(["clean", "-fdx"], localPath, log, ct);
-            await RunGitAsync(["submodule", "foreach", "--recursive", "git clean -fdx"], localPath, log, ct);
-
-            if (!string.IsNullOrWhiteSpace(targetCommitSha))
-            {
-                var verifiedHead = await GetHeadCommitShaAsync(localPath, ct);
-                if (!string.Equals(verifiedHead, targetCommitSha, StringComparison.OrdinalIgnoreCase))
-                {
-                    throw new InvalidOperationException(
-                        $"Checked out HEAD '{verifiedHead}' does not match expected immutable commit SHA '{targetCommitSha}'.");
-                }
-                await log($"Verified immutable revision: {verifiedHead}");
-            }
-            else
-            {
-                await log($"Updated to latest {branch}");
-            }
+            await CheckoutRevisionAndVerifyAsync(localPath, branch, targetCommitSha, log, ct);
         }
         else
         {
@@ -101,31 +52,65 @@ public static class GitHelper
 
             // Fetch all tags for GitVersion
             await RunGitAsync(["fetch", "--all", "--tags"], localPath, log, ct);
+            await CheckoutRevisionAndVerifyAsync(localPath, branch, targetCommitSha, log, ct);
+        }
+    }
 
-            if (!string.IsNullOrWhiteSpace(targetCommitSha))
+    private static async Task CheckoutRevisionAndVerifyAsync(
+        string localPath,
+        string branch,
+        string? targetCommitSha,
+        Func<string, Task> log,
+        CancellationToken ct)
+    {
+        if (!string.IsNullOrWhiteSpace(targetCommitSha))
+        {
+            try
             {
-                try
-                {
-                    await RunGitAsync(["fetch", "origin", targetCommitSha], localPath, log, ct);
-                }
-                catch
-                {
-                    // Fall back to objects already cloned
-                }
-                await RunGitAsync(["checkout", "--detach", targetCommitSha], localPath, log, ct);
-                await RunGitAsync(["submodule", "sync", "--recursive"], localPath, log, ct);
-                await RunGitAsync(["submodule", "update", "--init", "--recursive", "--force"], localPath, log, ct);
-                await RunGitAsync(["clean", "-fdx"], localPath, log, ct);
-                await RunGitAsync(["submodule", "foreach", "--recursive", "git clean -fdx"], localPath, log, ct);
-
-                var verifiedHead = await GetHeadCommitShaAsync(localPath, ct);
-                if (!string.Equals(verifiedHead, targetCommitSha, StringComparison.OrdinalIgnoreCase))
-                {
-                    throw new InvalidOperationException(
-                        $"Checked out HEAD '{verifiedHead}' does not match expected immutable commit SHA '{targetCommitSha}'.");
-                }
-                await log($"Verified immutable revision: {verifiedHead}");
+                await RunGitAsync(["fetch", "origin", targetCommitSha], localPath, log, ct);
             }
+            catch
+            {
+                // Fall back to existing fetched objects if direct fetch fails
+            }
+            await RunGitAsync(["checkout", "--detach", targetCommitSha], localPath, log, ct);
+        }
+        else
+        {
+            await RunGitAsync(["checkout", branch], localPath, log, ct);
+            await RunGitAsync(["reset", "--hard", $"origin/{branch}"], localPath, log, ct);
+        }
+
+        // Move every submodule HEAD to the commit recorded in the (just-updated) parent
+        // tree. `git fetch --recurse-submodules` only downloads objects; it does NOT
+        // advance the working tree of the submodules, and neither does `reset --hard`
+        // on the parent. Without an explicit `submodule update`, a submodule cloned at
+        // commit A stays on A forever, even if the parent now points at B — leading to
+        // builds against stale source (e.g. missing APIs added in B).
+        // `sync` first in case the submodule URL changed, `--force` to discard any
+        // working-tree changes inside the submodule.
+        await RunGitAsync(["submodule", "sync", "--recursive"], localPath, log, ct);
+        await RunGitAsync(["submodule", "update", "--init", "--recursive", "--force"], localPath, log, ct);
+
+        // Wipe untracked/ignored files (bin/, obj/, generated artifacts, NuGet caches
+        // local to the project, etc.) so every job starts from a state equivalent
+        // to a fresh clone.
+        await RunGitAsync(["clean", "-fdx"], localPath, log, ct);
+        await RunGitAsync(["submodule", "foreach", "--recursive", "git clean -fdx"], localPath, log, ct);
+
+        if (!string.IsNullOrWhiteSpace(targetCommitSha))
+        {
+            var verifiedHead = await GetHeadCommitShaAsync(localPath, ct);
+            if (!string.Equals(verifiedHead, targetCommitSha, StringComparison.OrdinalIgnoreCase))
+            {
+                throw new InvalidOperationException(
+                    $"Checked out HEAD '{verifiedHead}' does not match expected immutable commit SHA '{targetCommitSha}'.");
+            }
+            await log($"Verified immutable revision: {verifiedHead}");
+        }
+        else
+        {
+            await log($"Updated to latest {branch}");
         }
     }
 

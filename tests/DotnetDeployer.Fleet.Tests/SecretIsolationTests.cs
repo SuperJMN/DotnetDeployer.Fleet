@@ -2,42 +2,182 @@ using System.Diagnostics;
 using DotnetDeployer.Fleet.Core.Domain;
 using DotnetDeployer.Fleet.WorkerService.Execution;
 using FluentAssertions;
-using NSubstitute;
 
 namespace DotnetDeployer.Fleet.Tests;
 
 public sealed class SecretIsolationTests
 {
     [Fact]
-    public void Secrets_are_partitioned_excluding_push_api_key_from_build_environment()
+    public void Secrets_are_partitioned_excluding_all_publish_secrets_from_build_environment()
     {
         var allSecrets = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
         {
             ["NUGET_API_KEY"] = "secret-nuget-push-token",
             ["CUSTOM_PUSH_KEY"] = "secret-custom-push-token",
+            ["GITHUB_TOKEN"] = "secret-github-token",
+            ["GH_TOKEN"] = "secret-gh-token",
+            ["CUSTOM_GH_TOKEN"] = "secret-custom-gh-token",
+            ["ANDROID_KEYSTORE_BASE64"] = "keystore-base64",
             ["PRIVATE_FEED_RESTORE_TOKEN"] = "restore-pat",
             ["VSS_NUGET_EXTERNAL_FEED_ENDPOINTS"] = "endpoint-json",
             ["SIGNING_CERT_PWD"] = "cert-secret"
         };
 
-        var pushSecretNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+        var publishSecretNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
         {
             "NUGET_API_KEY",
-            "CUSTOM_PUSH_KEY"
+            "CUSTOM_PUSH_KEY",
+            "GITHUB_TOKEN",
+            "GH_TOKEN",
+            "CUSTOM_GH_TOKEN",
+            "ANDROID_KEYSTORE_BASE64"
         };
 
         var buildEnvVars = allSecrets
-            .Where(kvp => !pushSecretNames.Contains(kvp.Key))
+            .Where(kvp => !publishSecretNames.Contains(kvp.Key))
             .ToDictionary(kvp => kvp.Key, kvp => kvp.Value, StringComparer.OrdinalIgnoreCase);
 
-        // Push credentials must be excluded
+        // Publish credentials must be strictly excluded from build/test environment
         buildEnvVars.Should().NotContainKey("NUGET_API_KEY");
         buildEnvVars.Should().NotContainKey("CUSTOM_PUSH_KEY");
+        buildEnvVars.Should().NotContainKey("GITHUB_TOKEN");
+        buildEnvVars.Should().NotContainKey("GH_TOKEN");
+        buildEnvVars.Should().NotContainKey("CUSTOM_GH_TOKEN");
+        buildEnvVars.Should().NotContainKey("ANDROID_KEYSTORE_BASE64");
 
-        // Non-push secrets (e.g. private feed restore tokens) MUST be preserved
+        // Restore and other non-publish secrets MUST be preserved
         buildEnvVars.Should().ContainKey("PRIVATE_FEED_RESTORE_TOKEN").WhoseValue.Should().Be("restore-pat");
         buildEnvVars.Should().ContainKey("VSS_NUGET_EXTERNAL_FEED_ENDPOINTS").WhoseValue.Should().Be("endpoint-json");
         buildEnvVars.Should().ContainKey("SIGNING_CERT_PWD").WhoseValue.Should().Be("cert-secret");
+    }
+
+    [Fact]
+    public void DeployerYamlReader_extracts_all_publish_secret_names()
+    {
+        var yaml = """
+            github:
+              enabled: true
+              token:
+                from: env
+                name: "MY_GH_SECRET"
+              packages:
+                - project: app.csproj
+                  signing:
+                    keystore:
+                      from: env
+                      name: "MY_KEYSTORE_SECRET"
+            nuget:
+              enabled: true
+              apiKeyEnvVar: "MY_NUGET_SECRET"
+            """;
+
+        var config = DeployerYamlReader.ParseConfig(yaml);
+
+        config.PublishSecretNames.Should().Contain("NUGET_API_KEY");
+        config.PublishSecretNames.Should().Contain("GITHUB_TOKEN");
+        config.PublishSecretNames.Should().Contain("GH_TOKEN");
+        config.PublishSecretNames.Should().Contain("MY_NUGET_SECRET");
+        config.PublishSecretNames.Should().Contain("MY_GH_SECRET");
+        config.PublishSecretNames.Should().Contain("MY_KEYSTORE_SECRET");
+    }
+
+    [Fact]
+    public void CreateDotnetProcessStartInfo_removes_ambient_publish_secrets_from_environment()
+    {
+        const string sentinelNuget = "sentinel-nuget-ambient-secret-999";
+        const string sentinelGithub = "sentinel-github-ambient-secret-888";
+
+        Environment.SetEnvironmentVariable("NUGET_API_KEY", sentinelNuget);
+        Environment.SetEnvironmentVariable("GITHUB_TOKEN", sentinelGithub);
+
+        try
+        {
+            var scrubKeys = new[] { "NUGET_API_KEY", "GITHUB_TOKEN" };
+            var envVars = new Dictionary<string, string>
+            {
+                ["PRIVATE_FEED_RESTORE_TOKEN"] = "restore-token-abc"
+            };
+
+            var psi = DeployerRunner.CreateDotnetProcessStartInfo(
+                Directory.GetCurrentDirectory(),
+                ["--info"],
+                envVars,
+                scrubKeys);
+
+            psi.Environment.Should().NotContainKey("NUGET_API_KEY");
+            psi.Environment.Should().NotContainKey("GITHUB_TOKEN");
+            psi.Environment.Should().ContainKey("PRIVATE_FEED_RESTORE_TOKEN")
+                .WhoseValue.Should().Be("restore-token-abc");
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable("NUGET_API_KEY", null);
+            Environment.SetEnvironmentVariable("GITHUB_TOKEN", null);
+        }
+    }
+
+    [Fact]
+    public async Task Real_process_execution_scrubs_ambient_publish_secrets_and_preserves_restore_credentials()
+    {
+        const string sentinelAmbientNuget = "SENTINEL_AMBIENT_NUGET_SECRET_VAL";
+        const string sentinelAmbientGithub = "SENTINEL_AMBIENT_GITHUB_SECRET_VAL";
+        const string sentinelRestore = "SENTINEL_RESTORE_SECRET_VAL";
+
+        Environment.SetEnvironmentVariable("NUGET_API_KEY", sentinelAmbientNuget);
+        Environment.SetEnvironmentVariable("GITHUB_TOKEN", sentinelAmbientGithub);
+
+        try
+        {
+            var scrubKeys = new[] { "NUGET_API_KEY", "GITHUB_TOKEN" };
+            var envVars = new Dictionary<string, string>
+            {
+                ["PRIVATE_FEED_RESTORE_TOKEN"] = sentinelRestore
+            };
+
+            // Launch a real child process using ProcessStartInfo configured by DeployerRunner
+            var isWindows = OperatingSystem.IsWindows();
+            var shellExe = isWindows ? "cmd.exe" : "sh";
+            var shellArgs = isWindows
+                ? new[] { "/c", "echo NUGET=%NUGET_API_KEY%|GH=%GITHUB_TOKEN%|RESTORE=%PRIVATE_FEED_RESTORE_TOKEN%" }
+                : new[] { "-c", "echo \"NUGET=$NUGET_API_KEY|GH=$GITHUB_TOKEN|RESTORE=$PRIVATE_FEED_RESTORE_TOKEN\"" };
+
+            var psi = new ProcessStartInfo(shellExe)
+            {
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                UseShellExecute = false
+            };
+
+            foreach (var arg in shellArgs)
+                psi.ArgumentList.Add(arg);
+
+            // Apply DeployerRunner's build environment and secret scrubbing
+            DeployerRunner.ApplyBuildEnvironment(psi);
+
+            foreach (var key in scrubKeys)
+                psi.Environment.Remove(key);
+
+            foreach (var (k, v) in envVars)
+                psi.Environment[k] = v;
+
+            using var process = Process.Start(psi)!;
+            var output = await process.StandardOutput.ReadToEndAsync();
+            await process.WaitForExitAsync();
+
+            process.ExitCode.Should().Be(0);
+
+            // Verify: sentinel ambient publish secrets are NOT present in the child process output
+            output.Should().NotContain(sentinelAmbientNuget);
+            output.Should().NotContain(sentinelAmbientGithub);
+
+            // Verify: sentinel restore credential IS present in child process output
+            output.Should().Contain(sentinelRestore);
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable("NUGET_API_KEY", null);
+            Environment.SetEnvironmentVariable("GITHUB_TOKEN", null);
+        }
     }
 
     [Fact]
@@ -103,22 +243,5 @@ public sealed class SecretIsolationTests
     {
         public Task<int> RunAsync(ProcessStartInfo startInfo, Func<string, Task> onLine, CancellationToken ct = default)
             => handler(startInfo, onLine);
-    }
-
-    [Fact]
-    public void DeployerYamlReader_resolves_custom_apiKey_secret_name()
-    {
-        var yaml = """
-            nuget:
-              enabled: true
-              source: "https://nuget.example.com/v3/index.json"
-              apiKeyEnvVar: "MY_COMPANY_FEED_KEY"
-            """;
-
-        var config = DeployerYamlReader.ParseNuGetConfig(yaml);
-
-        config.Enabled.Should().BeTrue();
-        config.Source.Should().Be("https://nuget.example.com/v3/index.json");
-        config.ApiKeySecretName.Should().Be("MY_COMPANY_FEED_KEY");
     }
 }

@@ -7,37 +7,98 @@ public sealed record NuGetDeployConfig(
     string Source,
     string ApiKeySecretName);
 
+public sealed record GitHubDeployConfig(
+    bool Enabled,
+    string? Owner,
+    string? Repo,
+    string? TokenSecretName);
+
+public sealed record GitHubPagesDeployConfig(
+    bool Enabled);
+
+public sealed record DeployerConfigSummary(
+    NuGetDeployConfig NuGet,
+    GitHubDeployConfig GitHub,
+    GitHubPagesDeployConfig GitHubPages,
+    IReadOnlySet<string> PublishSecretNames);
+
 public static class DeployerYamlReader
 {
-    public static NuGetDeployConfig ReadNuGetConfig(string repoRoot)
+    private static readonly HashSet<string> WellKnownPublishSecrets = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "NUGET_API_KEY",
+        "GITHUB_TOKEN",
+        "GH_TOKEN"
+    };
+
+    public static NuGetDeployConfig ReadNuGetConfig(string repoRoot) =>
+        ReadConfig(repoRoot).NuGet;
+
+    public static NuGetDeployConfig ParseNuGetConfig(string yamlContent) =>
+        ParseConfig(yamlContent).NuGet;
+
+    public static DeployerConfigSummary ReadConfig(string repoRoot)
     {
         var yamlPath = FindDeployerYaml(repoRoot);
         if (yamlPath is null || !File.Exists(yamlPath))
-            return new NuGetDeployConfig(false, "https://api.nuget.org/v3/index.json", "NUGET_API_KEY");
+            return CreateDefaultConfig();
 
         try
         {
             var content = File.ReadAllText(yamlPath);
-            return ParseNuGetConfig(content);
+            return ParseConfig(content);
         }
         catch
         {
-            return new NuGetDeployConfig(false, "https://api.nuget.org/v3/index.json", "NUGET_API_KEY");
+            return CreateDefaultConfig();
         }
     }
 
-    public static NuGetDeployConfig ParseNuGetConfig(string yamlContent)
+    public static DeployerConfigSummary ParseConfig(string yamlContent)
     {
         if (string.IsNullOrWhiteSpace(yamlContent))
-            return new NuGetDeployConfig(false, "https://api.nuget.org/v3/index.json", "NUGET_API_KEY");
+            return CreateDefaultConfig();
 
-        using var reader = new StringReader(yamlContent);
-        var stream = new YamlStream();
-        stream.Load(reader);
+        var publishSecrets = new HashSet<string>(WellKnownPublishSecrets, StringComparer.OrdinalIgnoreCase);
 
-        if (stream.Documents.Count == 0 ||
-            stream.Documents[0].RootNode is not YamlMappingNode root ||
-            !TryGetMappingValue(root, "nuget", out var nugetNode) ||
+        try
+        {
+            using var reader = new StringReader(yamlContent);
+            var stream = new YamlStream();
+            stream.Load(reader);
+
+            if (stream.Documents.Count == 0 ||
+                stream.Documents[0].RootNode is not YamlMappingNode root)
+            {
+                return CreateDefaultConfig();
+            }
+
+            var nugetConfig = ParseNuGetSection(root, publishSecrets);
+            var githubConfig = ParseGitHubSection(root, publishSecrets);
+            var pagesConfig = ParsePagesSection(root);
+
+            CollectSigningSecrets(root, publishSecrets);
+
+            return new DeployerConfigSummary(nugetConfig, githubConfig, pagesConfig, publishSecrets);
+        }
+        catch
+        {
+            return CreateDefaultConfig();
+        }
+    }
+
+    private static DeployerConfigSummary CreateDefaultConfig()
+    {
+        return new DeployerConfigSummary(
+            new NuGetDeployConfig(false, "https://api.nuget.org/v3/index.json", "NUGET_API_KEY"),
+            new GitHubDeployConfig(false, null, null, "GITHUB_TOKEN"),
+            new GitHubPagesDeployConfig(false),
+            new HashSet<string>(WellKnownPublishSecrets, StringComparer.OrdinalIgnoreCase));
+    }
+
+    private static NuGetDeployConfig ParseNuGetSection(YamlMappingNode root, HashSet<string> publishSecrets)
+    {
+        if (!TryGetMappingValue(root, "nuget", out var nugetNode) ||
             nugetNode is not YamlMappingNode nuget)
         {
             return new NuGetDeployConfig(false, "https://api.nuget.org/v3/index.json", "NUGET_API_KEY");
@@ -89,7 +150,151 @@ public static class DeployerYamlReader
             }
         }
 
+        if (!string.IsNullOrWhiteSpace(apiKeySecretName))
+            publishSecrets.Add(apiKeySecretName);
+
         return new NuGetDeployConfig(enabled, source, apiKeySecretName);
+    }
+
+    private static GitHubDeployConfig ParseGitHubSection(YamlMappingNode root, HashSet<string> publishSecrets)
+    {
+        if (!TryGetMappingValue(root, "github", out var githubNode) ||
+            githubNode is not YamlMappingNode github)
+        {
+            return new GitHubDeployConfig(false, null, null, "GITHUB_TOKEN");
+        }
+
+        var enabled = true;
+        if (TryGetMappingValue(github, "enabled", out var enabledNode) &&
+            enabledNode is YamlScalarNode enabledScalar &&
+            bool.TryParse(enabledScalar.Value, out var parsedEnabled))
+        {
+            enabled = parsedEnabled;
+        }
+
+        string? owner = null;
+        if (TryGetMappingValue(github, "owner", out var ownerNode) &&
+            ownerNode is YamlScalarNode ownerScalar &&
+            !string.IsNullOrWhiteSpace(ownerScalar.Value))
+        {
+            owner = ownerScalar.Value.Trim();
+        }
+
+        string? repo = null;
+        if (TryGetMappingValue(github, "repo", out var repoNode) &&
+            repoNode is YamlScalarNode repoScalar &&
+            !string.IsNullOrWhiteSpace(repoScalar.Value))
+        {
+            repo = repoScalar.Value.Trim();
+        }
+
+        var tokenSecretName = "GITHUB_TOKEN";
+        if (TryGetMappingValue(github, "token", out var tokenNode))
+        {
+            if (tokenNode is YamlScalarNode scalarToken && !string.IsNullOrWhiteSpace(scalarToken.Value))
+            {
+                tokenSecretName = scalarToken.Value.Trim();
+            }
+            else if (tokenNode is YamlMappingNode tokenMapping)
+            {
+                if (TryGetMappingValue(tokenMapping, "name", out var nameNode) &&
+                    nameNode is YamlScalarNode nameScalar &&
+                    !string.IsNullOrWhiteSpace(nameScalar.Value))
+                {
+                    tokenSecretName = nameScalar.Value.Trim();
+                }
+                else if (TryGetMappingValue(tokenMapping, "env", out var envNode) &&
+                         envNode is YamlScalarNode envScalar &&
+                         !string.IsNullOrWhiteSpace(envScalar.Value))
+                {
+                    tokenSecretName = envScalar.Value.Trim();
+                }
+                else if (TryGetMappingValue(tokenMapping, "key", out var keySubNode) &&
+                         keySubNode is YamlScalarNode keySubScalar &&
+                         !string.IsNullOrWhiteSpace(keySubScalar.Value))
+                {
+                    tokenSecretName = keySubScalar.Value.Trim();
+                }
+            }
+        }
+
+        if (!string.IsNullOrWhiteSpace(tokenSecretName))
+            publishSecrets.Add(tokenSecretName);
+
+        return new GitHubDeployConfig(enabled, owner, repo, tokenSecretName);
+    }
+
+    private static GitHubPagesDeployConfig ParsePagesSection(YamlMappingNode root)
+    {
+        if (!TryGetMappingValue(root, "githubPages", out var pagesNode) ||
+            pagesNode is not YamlMappingNode pages)
+        {
+            return new GitHubPagesDeployConfig(false);
+        }
+
+        var enabled = true;
+        if (TryGetMappingValue(pages, "enabled", out var enabledNode) &&
+            enabledNode is YamlScalarNode enabledScalar &&
+            bool.TryParse(enabledScalar.Value, out var parsedEnabled))
+        {
+            enabled = parsedEnabled;
+        }
+
+        return new GitHubPagesDeployConfig(enabled);
+    }
+
+    private static void CollectSigningSecrets(YamlNode node, HashSet<string> publishSecrets)
+    {
+        if (node is YamlMappingNode mapping)
+        {
+            foreach (var child in mapping.Children)
+            {
+                if (child.Key is YamlScalarNode scalar &&
+                    string.Equals(scalar.Value, "signing", StringComparison.OrdinalIgnoreCase) &&
+                    child.Value is YamlMappingNode signingMapping)
+                {
+                    ExtractSecretNamesFromSigning(signingMapping, publishSecrets);
+                }
+                else
+                {
+                    CollectSigningSecrets(child.Value, publishSecrets);
+                }
+            }
+        }
+        else if (node is YamlSequenceNode sequence)
+        {
+            foreach (var item in sequence.Children)
+            {
+                CollectSigningSecrets(item, publishSecrets);
+            }
+        }
+    }
+
+    private static void ExtractSecretNamesFromSigning(YamlMappingNode signing, HashSet<string> publishSecrets)
+    {
+        foreach (var entry in signing.Children)
+        {
+            if (entry.Value is YamlMappingNode valueMapping)
+            {
+                if (TryGetMappingValue(valueMapping, "name", out var nameNode) &&
+                    nameNode is YamlScalarNode nameScalar &&
+                    !string.IsNullOrWhiteSpace(nameScalar.Value))
+                {
+                    publishSecrets.Add(nameScalar.Value.Trim());
+                }
+                else if (TryGetMappingValue(valueMapping, "key", out var keyNode) &&
+                         keyNode is YamlScalarNode keyScalar &&
+                         !string.IsNullOrWhiteSpace(keyScalar.Value))
+                {
+                    publishSecrets.Add(keyScalar.Value.Trim());
+                }
+            }
+            else if (entry.Value is YamlScalarNode scalar && !string.IsNullOrWhiteSpace(scalar.Value))
+            {
+                // e.g. keyAlias: android is not a secret, but if env var was named directly
+                publishSecrets.Add(scalar.Value.Trim());
+            }
+        }
     }
 
     private static string? FindDeployerYaml(string root)

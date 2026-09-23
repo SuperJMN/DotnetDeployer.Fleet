@@ -45,6 +45,8 @@ public class RemoteWorkerBackgroundService : BackgroundService
         this.coordinator = coordinator;
         this.options = options.Value;
         this.logger = logger;
+        this.workerId = this.options.Id ?? Guid.NewGuid();
+        this.repoStoragePath = this.options.RepoStoragePath;
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -145,8 +147,11 @@ public class RemoteWorkerBackgroundService : BackgroundService
         }
     }
 
-    private async Task ExecuteJobAsync(DeploymentJob job, CancellationToken ct)
+    internal async Task ExecuteJobAsync(DeploymentJob job, CancellationToken ct)
     {
+        Directory.CreateDirectory(repoStoragePath);
+        RepoStorageIsolator.EnsureBarrierFiles(repoStoragePath);
+
         logger.LogInformation("Starting job {JobId} for project {ProjectId}", job.Id, job.ProjectId);
 
         await using var logBuffer = new LogChunkBuffer(
@@ -281,30 +286,39 @@ public class RemoteWorkerBackgroundService : BackgroundService
                     .GroupBy(s => s.Name)
                     .ToDictionary(g => g.Key, g => g.Last().Value, StringComparer.OrdinalIgnoreCase);
 
-                var nugetConfig = DeployerYamlReader.ReadNuGetConfig(localPath);
-                var pushSecretKey = nugetConfig.ApiKeySecretName;
-                var pushSecretNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
-                {
-                    "NUGET_API_KEY"
-                };
-                if (!string.IsNullOrWhiteSpace(pushSecretKey))
-                {
-                    pushSecretNames.Add(pushSecretKey);
-                }
+                var configSummary = DeployerYamlReader.ReadConfig(localPath);
+                var nugetConfig = configSummary.NuGet;
+                var githubConfig = configSummary.GitHub;
+                var githubPagesConfig = configSummary.GitHubPages;
+                var publishSecretNames = configSummary.PublishSecretNames;
 
-                // Push credentials are strictly isolated from the build/test environment
+                // Push and release credentials are strictly isolated from the build/test/pack environment
                 var buildEnvVars = allSecrets
-                    .Where(kvp => !pushSecretNames.Contains(kvp.Key))
+                    .Where(kvp => !publishSecretNames.Contains(kvp.Key))
                     .ToDictionary(kvp => kvp.Key, kvp => kvp.Value, StringComparer.OrdinalIgnoreCase);
 
                 string? pushApiKey = null;
-                if (!string.IsNullOrWhiteSpace(pushSecretKey) && allSecrets.TryGetValue(pushSecretKey, out var keyFromCustomName))
+                if (!string.IsNullOrWhiteSpace(nugetConfig.ApiKeySecretName) && allSecrets.TryGetValue(nugetConfig.ApiKeySecretName, out var keyFromCustomName))
                 {
                     pushApiKey = keyFromCustomName;
                 }
                 else if (allSecrets.TryGetValue("NUGET_API_KEY", out var keyFromDefault))
                 {
                     pushApiKey = keyFromDefault;
+                }
+
+                string? githubToken = null;
+                if (!string.IsNullOrWhiteSpace(githubConfig.TokenSecretName) && allSecrets.TryGetValue(githubConfig.TokenSecretName, out var tokenFromCustomName))
+                {
+                    githubToken = tokenFromCustomName;
+                }
+                else if (allSecrets.TryGetValue("GITHUB_TOKEN", out var tokenFromDefault))
+                {
+                    githubToken = tokenFromDefault;
+                }
+                else if (allSecrets.TryGetValue("GH_TOKEN", out var tokenFromGh))
+                {
+                    githubToken = tokenFromGh;
                 }
 
                 var isPackageRelease = job.Kind == JobKind.Deploy && (nugetConfig.Enabled || project.ExpectedPackageIds.Count > 0);
@@ -324,6 +338,37 @@ public class RemoteWorkerBackgroundService : BackgroundService
 
                 var deployerArguments = BuildDeployerArguments(job, packageOutputDir);
 
+                async Task<(bool Success, string? Error)> RunSolutionBuildAsync(CancellationToken token)
+                {
+                    await Log("=== Running solution build ===");
+                    await EmitPhaseAsync(job.Id, PhaseEventKind.Start, "worker.solution.build", ct: token);
+                    var buildSw = System.Diagnostics.Stopwatch.StartNew();
+                    (bool Success, string? Error) result = (false, null);
+
+                    try
+                    {
+                        result = await SolutionBuildRunner.RunAsync(
+                            localPath,
+                            onLine: line => logBuffer.AppendAsync(line),
+                            envVars: buildEnvVars,
+                            scrubKeys: publishSecretNames,
+                            ct: token);
+
+                        await Log(result.Success
+                            ? "=== Solution build SUCCEEDED ==="
+                            : $"=== Solution build FAILED: {result.Error} ===");
+                        return result;
+                    }
+                    finally
+                    {
+                        buildSw.Stop();
+                        await EmitPhaseAsync(job.Id, PhaseEventKind.End, "worker.solution.build",
+                            status: result.Success ? PhaseStatus.Ok : PhaseStatus.Fail,
+                            durationMs: buildSw.ElapsedMilliseconds, ct: token);
+                        await logBuffer.FlushAsync();
+                    }
+                }
+
                 async Task<(bool Success, string? Error)> RunSolutionTestsAsync(CancellationToken token)
                 {
                     await Log("=== Running solution tests ===");
@@ -337,6 +382,7 @@ public class RemoteWorkerBackgroundService : BackgroundService
                             localPath,
                             onLine: line => logBuffer.AppendAsync(line),
                             envVars: buildEnvVars,
+                            scrubKeys: publishSecretNames,
                             ct: token);
 
                         await Log(result.Success
@@ -376,6 +422,7 @@ public class RemoteWorkerBackgroundService : BackgroundService
                             arguments: deployerArguments,
                             envVars: buildEnvVars,
                             onPhase: ev => jobSource.PostJobPhaseAsync(job.Id, ev, token),
+                            scrubKeys: publishSecretNames,
                             ct: token);
                         return result;
                     }
@@ -385,6 +432,83 @@ public class RemoteWorkerBackgroundService : BackgroundService
                         await EmitPhaseAsync(job.Id, PhaseEventKind.End, "worker.deployer.invoke",
                             status: result.Success ? PhaseStatus.Ok : PhaseStatus.Fail,
                             durationMs: deploySw.ElapsedMilliseconds, ct: token);
+                    }
+                }
+
+                async Task<(bool Success, string? Error)> RunGitHubDeployAsync(CancellationToken token)
+                {
+                    await Log("=== Invoking DotnetDeployer (GitHub deployment) ===");
+                    await EmitPhaseAsync(job.Id, PhaseEventKind.Start, "worker.deployer.github", ct: token);
+                    var ghSw = System.Diagnostics.Stopwatch.StartNew();
+                    (bool Success, string? Error) result = (false, null);
+
+                    string? tempConfigFile = null;
+                    try
+                    {
+                        var deployerArgs = new List<string>(deployerArguments);
+                        if (nugetConfig.Enabled)
+                        {
+                            tempConfigFile = Path.Combine(localPath, $".deployer.no-nuget.{Guid.NewGuid():N}.yaml");
+                            var originalYamlPath = Path.Combine(localPath, "deployer.yaml");
+                            if (!File.Exists(originalYamlPath))
+                                originalYamlPath = Path.Combine(localPath, "deployer.yml");
+
+                            if (File.Exists(originalYamlPath))
+                            {
+                                var content = await File.ReadAllTextAsync(originalYamlPath, token);
+                                var modified = System.Text.RegularExpressions.Regex.Replace(
+                                    content,
+                                    @"(\bnuget:\s*\n(?:\s+.*\n)*?\s+enabled:\s*)true",
+                                    "${1}false",
+                                    System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+                                if (modified == content)
+                                {
+                                    modified = System.Text.RegularExpressions.Regex.Replace(
+                                        content,
+                                        @"(\bnuget:\s*\n)",
+                                        "${1}  enabled: false\n",
+                                        System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+                                }
+                                await File.WriteAllTextAsync(tempConfigFile, modified, token);
+                                deployerArgs.AddRange(["--config", Path.GetFileName(tempConfigFile)]);
+                            }
+                        }
+
+                        var githubPublishEnvVars = new Dictionary<string, string>(buildEnvVars, StringComparer.OrdinalIgnoreCase);
+                        if (!string.IsNullOrWhiteSpace(githubToken))
+                        {
+                            githubPublishEnvVars[githubConfig.TokenSecretName ?? "GITHUB_TOKEN"] = githubToken;
+                            githubPublishEnvVars["GITHUB_TOKEN"] = githubToken;
+                        }
+
+                        var githubScrubKeys = publishSecretNames
+                            .Where(k => !string.Equals(k, "GITHUB_TOKEN", StringComparison.OrdinalIgnoreCase)
+                                     && !string.Equals(k, "GH_TOKEN", StringComparison.OrdinalIgnoreCase)
+                                     && !string.Equals(k, githubConfig.TokenSecretName, StringComparison.OrdinalIgnoreCase))
+                            .ToList();
+
+                        result = await DeployerRunner.RunAsync(
+                            localPath,
+                            onLine: line => logBuffer.AppendAsync(line),
+                            arguments: deployerArgs,
+                            envVars: githubPublishEnvVars,
+                            onPhase: ev => jobSource.PostJobPhaseAsync(job.Id, ev, token),
+                            scrubKeys: githubScrubKeys,
+                            ct: token);
+
+                        return result;
+                    }
+                    finally
+                    {
+                        if (tempConfigFile is not null && File.Exists(tempConfigFile))
+                        {
+                            try { File.Delete(tempConfigFile); } catch { }
+                        }
+                        ghSw.Stop();
+                        await EmitPhaseAsync(job.Id, PhaseEventKind.End, "worker.deployer.github",
+                            status: result.Success ? PhaseStatus.Ok : PhaseStatus.Fail,
+                            durationMs: ghSw.ElapsedMilliseconds, ct: token);
+                        await logBuffer.FlushAsync();
                     }
                 }
 
@@ -413,6 +537,7 @@ public class RemoteWorkerBackgroundService : BackgroundService
                             arguments: packArgs,
                             envVars: buildEnvVars,
                             onPhase: ev => jobSource.PostJobPhaseAsync(job.Id, ev, token),
+                            scrubKeys: publishSecretNames,
                             ct: token);
 
                         if (!deployerResult.Success)
@@ -565,24 +690,42 @@ public class RemoteWorkerBackgroundService : BackgroundService
                     var releaseResult = await WorkerDeploymentPipeline.RunReleasePipelineAsync(
                         job,
                         project,
+                        RunSolutionBuildAsync,
                         RunSolutionTestsAsync,
                         RunPackAsync,
                         VerifyInventoryAsync,
-                        RunPushAsync,
+                        nugetConfig.Enabled ? RunPushAsync : (_, _) => Task.FromResult<(bool, string?)>((true, null)),
+                        githubConfig.Enabled ? RunGitHubDeployAsync : null,
                         jobCt);
                     success = releaseResult.Success;
                     error = releaseResult.Error;
                 }
-                else
+                else if (job.Kind == JobKind.Deploy)
                 {
+                    Func<CancellationToken, Task<(bool Success, string? Error)>> deployAction =
+                        githubConfig.Enabled ? RunGitHubDeployAsync : RunDeployerAsync;
+
                     var standardResult = await WorkerDeploymentPipeline.RunAsync(
                         job,
                         project,
+                        RunSolutionBuildAsync,
                         RunSolutionTestsAsync,
-                        RunDeployerAsync,
+                        deployAction,
                         jobCt);
                     success = standardResult.Success;
                     error = standardResult.Error;
+                }
+                else
+                {
+                    var packageResult = await WorkerDeploymentPipeline.RunAsync(
+                        job,
+                        project,
+                        RunSolutionBuildAsync,
+                        RunSolutionTestsAsync,
+                        RunDeployerAsync,
+                        jobCt);
+                    success = packageResult.Success;
+                    error = packageResult.Error;
                 }
 
                 await logBuffer.FlushAsync();
@@ -691,7 +834,8 @@ public class RemoteWorkerBackgroundService : BackgroundService
     {
         try
         {
-            await jobSource.ReportJobCompletedAsync(jobId, false, error, ct);
+            using var timeoutCts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+            await jobSource.ReportJobCompletedAsync(jobId, false, error, timeoutCts.Token);
         }
         catch (Exception ex)
         {
@@ -782,10 +926,11 @@ public class RemoteWorkerBackgroundService : BackgroundService
     {
         try
         {
+            using var timeoutCts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
             await coordinator.UpdateStatusAsync(
                 workerId,
                 busy ? WorkerStatus.Busy : WorkerStatus.Online,
-                ct);
+                timeoutCts.Token);
         }
         catch (Exception ex)
         {
@@ -842,7 +987,7 @@ public class RemoteWorkerBackgroundService : BackgroundService
     /// coordinator. Telemetry-only — failures are swallowed by
     /// <see cref="IWorkerJobSource.PostJobPhaseAsync"/> and never break the build.
     /// </summary>
-    private Task EmitPhaseAsync(
+    private async Task EmitPhaseAsync(
         Guid jobId,
         PhaseEventKind kind,
         string name,
@@ -859,6 +1004,13 @@ public class RemoteWorkerBackgroundService : BackgroundService
             DurationMs = durationMs,
             Attrs = attrs ?? new Dictionary<string, string>()
         };
-        return jobSource.PostJobPhaseAsync(jobId, ev, ct);
+        try
+        {
+            await jobSource.PostJobPhaseAsync(jobId, ev, ct);
+        }
+        catch (Exception ex)
+        {
+            logger.LogDebug(ex, "Failed to emit phase event {Phase}", name);
+        }
     }
 }

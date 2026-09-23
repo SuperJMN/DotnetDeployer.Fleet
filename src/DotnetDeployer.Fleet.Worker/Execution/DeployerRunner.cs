@@ -24,6 +24,7 @@ public static class DeployerRunner
         IReadOnlyList<string>? arguments = null,
         IReadOnlyDictionary<string, string>? envVars = null,
         Func<PhaseEvent, Task>? onPhase = null,
+        IEnumerable<string>? scrubKeys = null,
         CancellationToken ct = default)
     {
         return await RunWithProcessRunnerAsync(
@@ -33,6 +34,7 @@ public static class DeployerRunner
             envVars,
             onPhase,
             StreamingProcessRunner.Instance,
+            scrubKeys,
             ct);
     }
 
@@ -43,13 +45,14 @@ public static class DeployerRunner
         IReadOnlyDictionary<string, string>? envVars,
         Func<PhaseEvent, Task>? onPhase,
         IStreamingProcessRunner processRunner,
+        IEnumerable<string>? scrubKeys = null,
         CancellationToken ct = default)
     {
         var commandArguments = new List<string> { "dnx", "dotnetdeployer.tool", "-y" };
         if (arguments is not null)
             commandArguments.AddRange(arguments);
 
-        var psi = CreateDotnetProcessStartInfo(workingDirectory, commandArguments, envVars);
+        var psi = CreateDotnetProcessStartInfo(workingDirectory, commandArguments, envVars, scrubKeys);
         var exitCode = await processRunner.RunAsync(psi, async line =>
         {
             // Deployer phase markers are telemetry, not human-readable log lines.
@@ -77,7 +80,8 @@ public static class DeployerRunner
     internal static ProcessStartInfo CreateDotnetProcessStartInfo(
         string workingDirectory,
         IEnumerable<string> arguments,
-        IReadOnlyDictionary<string, string>? envVars = null)
+        IReadOnlyDictionary<string, string>? envVars = null,
+        IEnumerable<string>? scrubKeys = null)
     {
         var psi = new ProcessStartInfo(ResolveDotnetExecutable())
         {
@@ -93,10 +97,27 @@ public static class DeployerRunner
 
         ApplyBuildEnvironment(psi);
 
+        var scrubSet = scrubKeys is not null
+            ? new HashSet<string>(scrubKeys, StringComparer.OrdinalIgnoreCase)
+            : null;
+
+        if (scrubSet is not null)
+        {
+            foreach (var key in scrubSet)
+            {
+                psi.Environment.Remove(key);
+            }
+        }
+
         if (envVars is not null)
         {
             foreach (var (key, value) in envVars)
-                psi.Environment[key] = value;
+            {
+                if (scrubSet is null || !scrubSet.Contains(key))
+                {
+                    psi.Environment[key] = value;
+                }
+            }
         }
 
         return psi;
