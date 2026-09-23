@@ -221,20 +221,29 @@ public class RemoteWorkerBackgroundService : BackgroundService
             try
             {
                 await Log($"=== DotnetDeployer.Fleet Worker | Job {job.Id} ===");
-                await Log($"Project: {project.Name} | Branch: {branch}");
+                await Log($"Project: {project.Name} | Branch: {branch} | CommitSha: {job.TriggerCommitSha}");
                 await Log($"Git URL: {project.GitUrl}");
+
+                if (string.IsNullOrWhiteSpace(job.TriggerCommitSha))
+                {
+                    var msg = "Release job rejected: TriggerCommitSha is missing or empty. An immutable commit SHA is required.";
+                    await Log($"=== FAILED: {msg} ===");
+                    await logBuffer.FlushAsync();
+                    await jobSource.ReportJobCompletedAsync(job.Id, false, msg, ct);
+                    return;
+                }
 
                 // worker.git.clone — the worker emits its own phases for steps that
                 // happen BEFORE DotnetDeployer is invoked (clone/fetch). DotnetDeployer
                 // emits the rest from inside the build.
                 await EmitPhaseAsync(job.Id, PhaseEventKind.Start, "worker.git.clone",
-                    attrs: new() { ["branch"] = branch }, ct: jobCt);
+                    attrs: new() { ["branch"] = branch, ["targetSha"] = job.TriggerCommitSha }, ct: jobCt);
                 var gitSw = System.Diagnostics.Stopwatch.StartNew();
                 bool gitOk = false;
                 try
                 {
                     await GitHelper.CloneOrFetchAsync(project.GitUrl, branch, localPath,
-                        msg => logBuffer.AppendAsync(msg), jobCt, project.GitToken);
+                        msg => logBuffer.AppendAsync(msg), jobCt, project.GitToken, job.TriggerCommitSha);
                     gitOk = true;
                 }
                 finally
@@ -267,10 +276,47 @@ public class RemoteWorkerBackgroundService : BackgroundService
                 var globalSecrets = await coordinator.GetGlobalSecretsAsync(ct);
                 var projectSecrets = await coordinator.GetProjectSecretsAsync(project.Id, ct);
 
-                var envVars = globalSecrets
+                var allSecrets = globalSecrets
                     .Concat(projectSecrets)
                     .GroupBy(s => s.Name)
-                    .ToDictionary(g => g.Key, g => g.Last().Value);
+                    .ToDictionary(g => g.Key, g => g.Last().Value, StringComparer.OrdinalIgnoreCase);
+
+                var nugetConfig = DeployerYamlReader.ReadNuGetConfig(localPath);
+                var pushSecretKey = nugetConfig.ApiKeySecretName;
+                var pushSecretNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+                {
+                    "NUGET_API_KEY"
+                };
+                if (!string.IsNullOrWhiteSpace(pushSecretKey))
+                {
+                    pushSecretNames.Add(pushSecretKey);
+                }
+
+                // Push credentials are strictly isolated from the build/test environment
+                var buildEnvVars = allSecrets
+                    .Where(kvp => !pushSecretNames.Contains(kvp.Key))
+                    .ToDictionary(kvp => kvp.Key, kvp => kvp.Value, StringComparer.OrdinalIgnoreCase);
+
+                string? pushApiKey = null;
+                if (!string.IsNullOrWhiteSpace(pushSecretKey) && allSecrets.TryGetValue(pushSecretKey, out var keyFromCustomName))
+                {
+                    pushApiKey = keyFromCustomName;
+                }
+                else if (allSecrets.TryGetValue("NUGET_API_KEY", out var keyFromDefault))
+                {
+                    pushApiKey = keyFromDefault;
+                }
+
+                var isPackageRelease = job.Kind == JobKind.Deploy && (nugetConfig.Enabled || project.ExpectedPackageIds.Count > 0);
+
+                if (isPackageRelease && project.ExpectedPackageIds.Count == 0)
+                {
+                    var msg = "Package release rejected: project.ExpectedPackageIds is empty. Release jobs with NuGet enabled must declare an explicit expected package inventory.";
+                    await Log($"=== FAILED: {msg} ===");
+                    await logBuffer.FlushAsync();
+                    await jobSource.ReportJobCompletedAsync(job.Id, false, msg, ct);
+                    return;
+                }
 
                 var packageOutputDir = job.Kind == JobKind.PackageBuild
                     ? PreparePackageOutputDirectory(job.Id)
@@ -290,7 +336,7 @@ public class RemoteWorkerBackgroundService : BackgroundService
                         result = await SolutionTestRunner.RunAsync(
                             localPath,
                             onLine: line => logBuffer.AppendAsync(line),
-                            envVars: envVars,
+                            envVars: buildEnvVars,
                             ct: token);
 
                         await Log(result.Success
@@ -328,7 +374,7 @@ public class RemoteWorkerBackgroundService : BackgroundService
                             localPath,
                             onLine: line => logBuffer.AppendAsync(line),
                             arguments: deployerArguments,
-                            envVars: envVars,
+                            envVars: buildEnvVars,
                             onPhase: ev => jobSource.PostJobPhaseAsync(job.Id, ev, token),
                             ct: token);
                         return result;
@@ -342,12 +388,202 @@ public class RemoteWorkerBackgroundService : BackgroundService
                     }
                 }
 
-                var (success, error) = await WorkerDeploymentPipeline.RunAsync(
-                    job,
-                    project,
-                    RunSolutionTestsAsync,
-                    RunDeployerAsync,
-                    jobCt);
+                async Task<(bool Success, string? Error, IReadOnlyList<string> ProducedPackagePaths)> RunPackAsync(CancellationToken token)
+                {
+                    await Log("=== Invoking DotnetDeployer (pack phase) ===");
+                    await EmitPhaseAsync(job.Id, PhaseEventKind.Start, "worker.deployer.pack", ct: token);
+                    var packSw = System.Diagnostics.Stopwatch.StartNew();
+                    (bool Success, string? Error, IReadOnlyList<string> ProducedPackagePaths) result = (false, null, []);
+
+                    try
+                    {
+                        var nupkgDir = Path.Combine(localPath, "nupkg");
+                        if (Directory.Exists(nupkgDir))
+                        {
+                            foreach (var existing in Directory.GetFiles(nupkgDir, "*.nupkg"))
+                            {
+                                try { File.Delete(existing); } catch { }
+                            }
+                        }
+
+                        var packArgs = deployerArguments.Concat(["--dry-run"]).ToList();
+                        var deployerResult = await DeployerRunner.RunAsync(
+                            localPath,
+                            onLine: line => logBuffer.AppendAsync(line),
+                            arguments: packArgs,
+                            envVars: buildEnvVars,
+                            onPhase: ev => jobSource.PostJobPhaseAsync(job.Id, ev, token),
+                            ct: token);
+
+                        if (!deployerResult.Success)
+                        {
+                            result = (false, deployerResult.Error, []);
+                            return result;
+                        }
+
+                        var producedFiles = new List<string>();
+                        if (Directory.Exists(nupkgDir))
+                        {
+                            producedFiles.AddRange(Directory.GetFiles(nupkgDir, "*.nupkg"));
+                        }
+                        else
+                        {
+                            var allFound = Directory.GetFiles(localPath, "*.nupkg", SearchOption.AllDirectories)
+                                .Where(p => !p.Contains("/bin/") && !p.Contains("\\bin\\") && !p.Contains("/obj/") && !p.Contains("\\obj\\"))
+                                .ToList();
+                            producedFiles.AddRange(allFound);
+                        }
+
+                        result = (true, null, producedFiles);
+                        return result;
+                    }
+                    finally
+                    {
+                        packSw.Stop();
+                        await EmitPhaseAsync(job.Id, PhaseEventKind.End, "worker.deployer.pack",
+                            status: result.Success ? PhaseStatus.Ok : PhaseStatus.Fail,
+                            durationMs: packSw.ElapsedMilliseconds, ct: token);
+                        await logBuffer.FlushAsync();
+                    }
+                }
+
+                async Task<(bool Success, string? Error)> VerifyInventoryAsync(IReadOnlyList<string> packagePaths, CancellationToken token)
+                {
+                    await Log("=== Verifying package inventory ===");
+                    await EmitPhaseAsync(job.Id, PhaseEventKind.Start, "worker.inventory.verify", ct: token);
+                    var verifySw = System.Diagnostics.Stopwatch.StartNew();
+                    (bool Success, string? Error) result = (false, null);
+
+                    try
+                    {
+                        var producedIds = new List<string>();
+                        foreach (var path in packagePaths)
+                        {
+                            try
+                            {
+                                var packageId = NuGetPackageReader.ReadPackageId(path);
+                                producedIds.Add(packageId);
+                            }
+                            catch (Exception ex)
+                            {
+                                var err = $"Failed to read package ID from '{Path.GetFileName(path)}': {ex.Message}";
+                                await Log($"[inventory] {err}");
+                                result = (false, err);
+                                return result;
+                            }
+                        }
+
+                        await Log($"[inventory] Expected packages ({project.ExpectedPackageIds.Count}): {string.Join(", ", project.ExpectedPackageIds)}");
+                        await Log($"[inventory] Produced packages ({producedIds.Count}): {string.Join(", ", producedIds)}");
+
+                        var validation = PackageInventoryValidator.Validate(project.ExpectedPackageIds, producedIds);
+                        if (!validation.IsValid)
+                        {
+                            if (validation.MissingIds.Count > 0)
+                                await Log($"[inventory] MISSING expected packages: {string.Join(", ", validation.MissingIds)}");
+                            if (validation.ExtraIds.Count > 0)
+                                await Log($"[inventory] UNEXPECTED packages produced: {string.Join(", ", validation.ExtraIds)}");
+                            if (validation.DuplicateIds.Count > 0)
+                                await Log($"[inventory] DUPLICATE packages produced: {string.Join(", ", validation.DuplicateIds)}");
+
+                            result = (false, validation.ErrorMessage);
+                            return result;
+                        }
+
+                        await Log("=== Package inventory verified successfully ===");
+                        result = (true, null);
+                        return result;
+                    }
+                    finally
+                    {
+                        verifySw.Stop();
+                        await EmitPhaseAsync(job.Id, PhaseEventKind.End, "worker.inventory.verify",
+                            status: result.Success ? PhaseStatus.Ok : PhaseStatus.Fail,
+                            durationMs: verifySw.ElapsedMilliseconds, ct: token);
+                        await logBuffer.FlushAsync();
+                    }
+                }
+
+                async Task<(bool Success, string? Error)> RunPushAsync(IReadOnlyList<string> packagePaths, CancellationToken token)
+                {
+                    await Log("=== Pushing NuGet packages ===");
+                    await EmitPhaseAsync(job.Id, PhaseEventKind.Start, "worker.nuget.push",
+                        attrs: new() { ["source"] = nugetConfig.Source }, ct: token);
+                    var pushSw = System.Diagnostics.Stopwatch.StartNew();
+                    (bool Success, string? Error) result = (false, null);
+
+                    try
+                    {
+                        if (string.IsNullOrWhiteSpace(pushApiKey))
+                        {
+                            var err = $"NuGet push secret '{nugetConfig.ApiKeySecretName}' not found in configured secrets.";
+                            await Log($"[nuget.push] FAILED: {err}");
+                            result = (false, err);
+                            return result;
+                        }
+
+                        foreach (var packagePath in packagePaths)
+                        {
+                            await Log($"[nuget.push] Pushing {Path.GetFileName(packagePath)} to {nugetConfig.Source}...");
+                            var pushResult = await NuGetPackagePusher.PushAsync(
+                                localPath,
+                                packagePath,
+                                pushApiKey,
+                                nugetConfig.Source,
+                                line => logBuffer.AppendAsync(line),
+                                token);
+
+                            if (!pushResult.Success)
+                            {
+                                await Log($"[nuget.push] FAILED pushing {Path.GetFileName(packagePath)}: {pushResult.Error}");
+                                result = (false, pushResult.Error);
+                                return result;
+                            }
+
+                            await Log($"[nuget.push] Successfully pushed {Path.GetFileName(packagePath)}");
+                        }
+
+                        await Log("=== All NuGet packages pushed successfully ===");
+                        result = (true, null);
+                        return result;
+                    }
+                    finally
+                    {
+                        pushSw.Stop();
+                        await EmitPhaseAsync(job.Id, PhaseEventKind.End, "worker.nuget.push",
+                            status: result.Success ? PhaseStatus.Ok : PhaseStatus.Fail,
+                            durationMs: pushSw.ElapsedMilliseconds, ct: token);
+                        await logBuffer.FlushAsync();
+                    }
+                }
+
+                bool success;
+                string? error;
+
+                if (isPackageRelease)
+                {
+                    var releaseResult = await WorkerDeploymentPipeline.RunReleasePipelineAsync(
+                        job,
+                        project,
+                        RunSolutionTestsAsync,
+                        RunPackAsync,
+                        VerifyInventoryAsync,
+                        RunPushAsync,
+                        jobCt);
+                    success = releaseResult.Success;
+                    error = releaseResult.Error;
+                }
+                else
+                {
+                    var standardResult = await WorkerDeploymentPipeline.RunAsync(
+                        job,
+                        project,
+                        RunSolutionTestsAsync,
+                        RunDeployerAsync,
+                        jobCt);
+                    success = standardResult.Success;
+                    error = standardResult.Error;
+                }
 
                 await logBuffer.FlushAsync();
 

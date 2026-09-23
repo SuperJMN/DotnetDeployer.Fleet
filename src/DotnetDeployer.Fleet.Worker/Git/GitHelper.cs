@@ -13,10 +13,12 @@ public static class GitHelper
         string gitUrl,
         string branch,
         string localPath,
-        Func<string, Task> log,
+        Func<string, Task>? log = null,
         CancellationToken ct = default,
-        string? gitToken = null)
+        string? gitToken = null,
+        string? targetCommitSha = null)
     {
+        log ??= _ => Task.CompletedTask;
         var effectiveUrl = InjectToken(gitUrl, gitToken);
         var displayUrl = gitUrl;
 
@@ -30,8 +32,24 @@ public static class GitHelper
                 await RunGitAsync(["remote", "set-url", "origin", effectiveUrl], localPath, log, ct);
 
             await RunGitAsync(["fetch", "--all", "--tags", "--recurse-submodules", "--prune"], localPath, log, ct);
-            await RunGitAsync(["checkout", branch], localPath, log, ct);
-            await RunGitAsync(["reset", "--hard", $"origin/{branch}"], localPath, log, ct);
+
+            if (!string.IsNullOrWhiteSpace(targetCommitSha))
+            {
+                try
+                {
+                    await RunGitAsync(["fetch", "origin", targetCommitSha], localPath, log, ct);
+                }
+                catch
+                {
+                    // Fall back to existing fetched objects if direct fetch fails
+                }
+                await RunGitAsync(["checkout", "--detach", targetCommitSha], localPath, log, ct);
+            }
+            else
+            {
+                await RunGitAsync(["checkout", branch], localPath, log, ct);
+                await RunGitAsync(["reset", "--hard", $"origin/{branch}"], localPath, log, ct);
+            }
 
             // Move every submodule HEAD to the commit recorded in the (just-updated) parent
             // tree. `git fetch --recurse-submodules` only downloads objects; it does NOT
@@ -46,15 +64,24 @@ public static class GitHelper
 
             // Wipe untracked/ignored files (bin/, obj/, generated artifacts, NuGet caches
             // local to the project, etc.) so every job starts from a state equivalent
-            // to a fresh clone. Without this, MSBuild's incremental build can reuse
-            // stale outputs from a previous job — the .NET Android SDK in particular
-            // does NOT treat -p:ApplicationVersion / -p:ApplicationDisplayVersion
-            // as inputs that invalidate the build, so a publish for v1.2.4 can silently
-            // ship the APK that was produced by the previous v1.2.3 job. Submodules
-            // are wiped recursively for the same reason.
+            // to a fresh clone.
             await RunGitAsync(["clean", "-fdx"], localPath, log, ct);
             await RunGitAsync(["submodule", "foreach", "--recursive", "git clean -fdx"], localPath, log, ct);
-            await log($"Updated to latest {branch}");
+
+            if (!string.IsNullOrWhiteSpace(targetCommitSha))
+            {
+                var verifiedHead = await GetHeadCommitShaAsync(localPath, ct);
+                if (!string.Equals(verifiedHead, targetCommitSha, StringComparison.OrdinalIgnoreCase))
+                {
+                    throw new InvalidOperationException(
+                        $"Checked out HEAD '{verifiedHead}' does not match expected immutable commit SHA '{targetCommitSha}'.");
+                }
+                await log($"Verified immutable revision: {verifiedHead}");
+            }
+            else
+            {
+                await log($"Updated to latest {branch}");
+            }
         }
         else
         {
@@ -74,7 +101,60 @@ public static class GitHelper
 
             // Fetch all tags for GitVersion
             await RunGitAsync(["fetch", "--all", "--tags"], localPath, log, ct);
+
+            if (!string.IsNullOrWhiteSpace(targetCommitSha))
+            {
+                try
+                {
+                    await RunGitAsync(["fetch", "origin", targetCommitSha], localPath, log, ct);
+                }
+                catch
+                {
+                    // Fall back to objects already cloned
+                }
+                await RunGitAsync(["checkout", "--detach", targetCommitSha], localPath, log, ct);
+                await RunGitAsync(["submodule", "sync", "--recursive"], localPath, log, ct);
+                await RunGitAsync(["submodule", "update", "--init", "--recursive", "--force"], localPath, log, ct);
+                await RunGitAsync(["clean", "-fdx"], localPath, log, ct);
+                await RunGitAsync(["submodule", "foreach", "--recursive", "git clean -fdx"], localPath, log, ct);
+
+                var verifiedHead = await GetHeadCommitShaAsync(localPath, ct);
+                if (!string.Equals(verifiedHead, targetCommitSha, StringComparison.OrdinalIgnoreCase))
+                {
+                    throw new InvalidOperationException(
+                        $"Checked out HEAD '{verifiedHead}' does not match expected immutable commit SHA '{targetCommitSha}'.");
+                }
+                await log($"Verified immutable revision: {verifiedHead}");
+            }
         }
+    }
+
+    public static async Task<string> GetHeadCommitShaAsync(string localPath, CancellationToken ct = default)
+    {
+        var psi = new ProcessStartInfo("git")
+        {
+            WorkingDirectory = localPath,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            UseShellExecute = false
+        };
+        psi.ArgumentList.Add("rev-parse");
+        psi.ArgumentList.Add("HEAD");
+
+        using var process = Process.Start(psi)
+            ?? throw new InvalidOperationException("Failed to start git rev-parse HEAD process");
+
+        var stdout = process.StandardOutput.ReadToEndAsync(ct);
+        var stderr = process.StandardError.ReadToEndAsync(ct);
+
+        await process.WaitForExitAsync(ct);
+        var outText = await stdout;
+        var errText = await stderr;
+
+        if (process.ExitCode != 0)
+            throw new InvalidOperationException($"git rev-parse HEAD failed (exit {process.ExitCode}): {errText.Trim()}");
+
+        return outText.Trim();
     }
 
     /// <summary>

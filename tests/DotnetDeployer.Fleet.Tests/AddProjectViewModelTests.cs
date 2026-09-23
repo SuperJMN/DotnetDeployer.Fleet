@@ -40,6 +40,14 @@ public class AddProjectViewModelTests
     }
 
     [Fact]
+    public void Expected_package_ids_text_is_empty_by_default()
+    {
+        var vm = CreateViewModel();
+
+        vm.ExpectedPackageIdsText.Should().BeEmpty();
+    }
+
+    [Fact]
     public async Task TrySaveAsync_ShouldRejectMissingRequiredFields()
     {
         var vm = CreateViewModel();

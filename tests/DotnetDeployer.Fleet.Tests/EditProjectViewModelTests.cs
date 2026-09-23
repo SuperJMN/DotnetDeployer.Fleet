@@ -31,4 +31,22 @@ public sealed class EditProjectViewModelTests
 
         vm.RunTestsBeforeDeploy.Should().Be(runTestsBeforeDeploy);
     }
+
+    [Fact]
+    public void Loads_persisted_expected_package_ids()
+    {
+        var project = new Project
+        {
+            ExpectedPackageIds = ["Pkg.A", "Pkg.B"]
+        };
+        var client = new FleetApiClient(new HttpClientHandler(), new HttpClientHandler());
+
+        var vm = new EditProjectViewModel(
+            project,
+            client,
+            Substitute.For<INavigator>(),
+            projectsForRefresh: null);
+
+        vm.ExpectedPackageIdsText.Should().Be("Pkg.A, Pkg.B");
+    }
 }

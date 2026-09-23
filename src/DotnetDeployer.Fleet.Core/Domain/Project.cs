@@ -17,10 +17,16 @@ public class Project
     public int PollingIntervalMinutes { get; set; } = 0;
 
     /// <summary>
-    /// Whether deployment jobs must run the repository's root solution tests before
-    /// invoking DotnetDeployer. Package build jobs never run this test gate.
+    /// Whether release jobs (both Deploy and PackageBuild) must run the repository's root
+    /// solution tests before invoking packaging or deployer.
     /// </summary>
     public bool RunTestsBeforeDeploy { get; set; } = true;
+
+    /// <summary>
+    /// Authoritative list of expected package IDs for package releases.
+    /// If empty or missing, a package release job fails closed before pushing to the feed.
+    /// </summary>
+    public List<string> ExpectedPackageIds { get; set; } = [];
 
     public string? LastPolledCommitSha { get; set; }
     public DateTimeOffset? LastPolledAt { get; set; }

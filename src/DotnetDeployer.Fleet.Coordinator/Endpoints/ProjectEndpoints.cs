@@ -125,15 +125,37 @@ public static class ProjectEndpoints
         return Results.NoContent();
     }
 
-    private static async Task<IResult> EnqueueDeploy(Guid id, IFleetStorage storage, JobAssignmentSignal signal)
+    internal static async Task<IResult> EnqueueDeploy(
+        Guid id,
+        [FromBody] EnqueueDeployRequest? req,
+        IFleetStorage storage,
+        IGitCommitResolver commitResolver,
+        JobAssignmentSignal signal,
+        HttpContext httpContext)
     {
         var project = await storage.GetProjectAsync(id);
         if (project is null)
             return Results.NotFound();
 
+        string? sha = req?.CommitSha;
+        if (!string.IsNullOrWhiteSpace(sha))
+        {
+            if (!GitCommitResolver.IsValidFullSha(sha))
+                return Results.BadRequest(new { error = "Invalid Git commit SHA specified." });
+            sha = sha.Trim();
+        }
+        else
+        {
+            sha = await commitResolver.ResolveLatestShaAsync(project.GitUrl, project.Branch, project.GitToken, httpContext.RequestAborted);
+        }
+
+        if (string.IsNullOrWhiteSpace(sha))
+            return Results.BadRequest(new { error = $"Could not resolve a complete Git commit SHA for branch '{project.Branch}'." });
+
         var job = new DeploymentJob
         {
             ProjectId = id,
+            TriggerCommitSha = sha,
             IsAutoTriggered = false
         };
 
@@ -142,15 +164,32 @@ public static class ProjectEndpoints
         return Results.Created($"/api/jobs/{job.Id}", job);
     }
 
-    private static async Task<IResult> EnqueuePackageBuild(
+    internal static async Task<IResult> EnqueuePackageBuild(
         Guid id,
         [FromBody] PackageBuildRequest req,
         IFleetStorage storage,
-        JobAssignmentSignal signal)
+        IGitCommitResolver commitResolver,
+        JobAssignmentSignal signal,
+        HttpContext httpContext)
     {
         var project = await storage.GetProjectAsync(id);
         if (project is null)
             return Results.NotFound();
+
+        string? sha = req.CommitSha;
+        if (!string.IsNullOrWhiteSpace(sha))
+        {
+            if (!GitCommitResolver.IsValidFullSha(sha))
+                return Results.BadRequest(new { error = "Invalid Git commit SHA specified." });
+            sha = sha.Trim();
+        }
+        else
+        {
+            sha = await commitResolver.ResolveLatestShaAsync(project.GitUrl, project.Branch, project.GitToken, httpContext.RequestAborted);
+        }
+
+        if (string.IsNullOrWhiteSpace(sha))
+            return Results.BadRequest(new { error = $"Could not resolve a complete Git commit SHA for branch '{project.Branch}'." });
 
         var targets = (req.Targets ?? [])
             .Where(t => !string.IsNullOrWhiteSpace(t.Format) && !string.IsNullOrWhiteSpace(t.Architecture))
@@ -167,6 +206,7 @@ public static class ProjectEndpoints
         var packageRequest = new PackageBuildRequest
         {
             PackageProject = string.IsNullOrWhiteSpace(req.PackageProject) ? null : req.PackageProject.Trim(),
+            CommitSha = sha,
             Targets = targets
         };
 
@@ -174,6 +214,7 @@ public static class ProjectEndpoints
         {
             ProjectId = id,
             Kind = JobKind.PackageBuild,
+            TriggerCommitSha = sha,
             IsAutoTriggered = false,
             PackageRequestJson = PackageBuildRequest.Serialize(packageRequest)
         };
@@ -239,7 +280,11 @@ public static class ProjectEndpoints
         Branch = req.Branch,
         PollingIntervalMinutes = req.PollingIntervalMinutes,
         GitToken = string.IsNullOrWhiteSpace(req.GitToken) ? null : req.GitToken,
-        RunTestsBeforeDeploy = req.RunTestsBeforeDeploy ?? true
+        RunTestsBeforeDeploy = req.RunTestsBeforeDeploy ?? true,
+        ExpectedPackageIds = req.ExpectedPackageIds?
+            .Where(id => !string.IsNullOrWhiteSpace(id))
+            .Select(id => id.Trim())
+            .ToList() ?? []
     };
 
     internal static void ApplyUpdate(Project project, UpdateProjectRequest req)
@@ -253,7 +298,16 @@ public static class ProjectEndpoints
             project.GitToken = string.IsNullOrWhiteSpace(req.GitToken) ? null : req.GitToken;
         if (req.RunTestsBeforeDeploy.HasValue)
             project.RunTestsBeforeDeploy = req.RunTestsBeforeDeploy.Value;
+        if (req.ExpectedPackageIds is not null)
+        {
+            project.ExpectedPackageIds = req.ExpectedPackageIds
+                .Where(id => !string.IsNullOrWhiteSpace(id))
+                .Select(id => id.Trim())
+                .ToList();
+        }
     }
+
+    public record EnqueueDeployRequest(string? CommitSha = null);
 
     public record CreateProjectRequest(
         string Name,
@@ -261,7 +315,8 @@ public static class ProjectEndpoints
         string Branch = "main",
         int PollingIntervalMinutes = 0,
         string? GitToken = null,
-        bool? RunTestsBeforeDeploy = null);
+        bool? RunTestsBeforeDeploy = null,
+        List<string>? ExpectedPackageIds = null);
 
     public record UpdateProjectRequest(
         string? Name,
@@ -269,5 +324,6 @@ public static class ProjectEndpoints
         string? Branch,
         int? PollingIntervalMinutes,
         string? GitToken = null,
-        bool? RunTestsBeforeDeploy = null);
+        bool? RunTestsBeforeDeploy = null,
+        List<string>? ExpectedPackageIds = null);
 }
