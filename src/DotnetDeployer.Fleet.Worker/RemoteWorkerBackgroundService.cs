@@ -291,10 +291,23 @@ public class RemoteWorkerBackgroundService : BackgroundService
                 var githubConfig = configSummary.GitHub;
                 var githubPagesConfig = configSummary.GitHubPages;
                 var publishSecretNames = configSummary.PublishSecretNames;
+                var signingSecretNames = configSummary.SigningSecretNames;
 
-                // Push and release credentials are strictly isolated from the build/test/pack environment
+                // Solution build and test environments must NOT receive publication secrets OR signing secrets
+                var buildScrubKeys = publishSecretNames
+                    .Concat(signingSecretNames)
+                    .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
                 var buildEnvVars = allSecrets
-                    .Where(kvp => !publishSecretNames.Contains(kvp.Key))
+                    .Where(kvp => !buildScrubKeys.Contains(kvp.Key))
+                    .ToDictionary(kvp => kvp.Key, kvp => kvp.Value, StringComparer.OrdinalIgnoreCase);
+
+                // Packaging requires signing secrets (e.g. Android keystore and passwords),
+                // but MUST NOT receive publication/push credentials.
+                var packScrubKeys = publishSecretNames;
+
+                var packEnvVars = allSecrets
+                    .Where(kvp => !packScrubKeys.Contains(kvp.Key))
                     .ToDictionary(kvp => kvp.Key, kvp => kvp.Value, StringComparer.OrdinalIgnoreCase);
 
                 string? pushApiKey = null;
@@ -351,7 +364,7 @@ public class RemoteWorkerBackgroundService : BackgroundService
                             localPath,
                             onLine: line => logBuffer.AppendAsync(line),
                             envVars: buildEnvVars,
-                            scrubKeys: publishSecretNames,
+                            scrubKeys: buildScrubKeys,
                             ct: token);
 
                         await Log(result.Success
@@ -382,7 +395,7 @@ public class RemoteWorkerBackgroundService : BackgroundService
                             localPath,
                             onLine: line => logBuffer.AppendAsync(line),
                             envVars: buildEnvVars,
-                            scrubKeys: publishSecretNames,
+                            scrubKeys: buildScrubKeys,
                             ct: token);
 
                         await Log(result.Success
@@ -420,9 +433,9 @@ public class RemoteWorkerBackgroundService : BackgroundService
                             localPath,
                             onLine: line => logBuffer.AppendAsync(line),
                             arguments: deployerArguments,
-                            envVars: buildEnvVars,
+                            envVars: packEnvVars,
                             onPhase: ev => jobSource.PostJobPhaseAsync(job.Id, ev, token),
-                            scrubKeys: publishSecretNames,
+                            scrubKeys: packScrubKeys,
                             ct: token);
                         return result;
                     }
@@ -474,7 +487,7 @@ public class RemoteWorkerBackgroundService : BackgroundService
                             }
                         }
 
-                        var githubPublishEnvVars = new Dictionary<string, string>(buildEnvVars, StringComparer.OrdinalIgnoreCase);
+                        var githubPublishEnvVars = new Dictionary<string, string>(packEnvVars, StringComparer.OrdinalIgnoreCase);
                         if (!string.IsNullOrWhiteSpace(githubToken))
                         {
                             githubPublishEnvVars[githubConfig.TokenSecretName ?? "GITHUB_TOKEN"] = githubToken;
@@ -535,9 +548,9 @@ public class RemoteWorkerBackgroundService : BackgroundService
                             localPath,
                             onLine: line => logBuffer.AppendAsync(line),
                             arguments: packArgs,
-                            envVars: buildEnvVars,
+                            envVars: packEnvVars,
                             onPhase: ev => jobSource.PostJobPhaseAsync(job.Id, ev, token),
-                            scrubKeys: publishSecretNames,
+                            scrubKeys: packScrubKeys,
                             ct: token);
 
                         if (!deployerResult.Success)

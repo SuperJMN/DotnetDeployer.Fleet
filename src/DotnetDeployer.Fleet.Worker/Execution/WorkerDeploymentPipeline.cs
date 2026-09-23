@@ -37,6 +37,19 @@ internal static class WorkerDeploymentPipeline
         CancellationToken ct = default) =>
         RunAsync(job, project, _ => Task.FromResult<(bool, string?)>((true, null)), runSolutionTests, runDeployer, ct);
 
+    /// <summary>
+    /// Executes the release pipeline for a project:
+    /// 1. Solution build gate
+    /// 2. Solution test gate (if configured)
+    /// 3. Package generation (pack)
+    /// 4. Package inventory verification
+    /// 5. NuGet package push
+    /// 6. Additional publication (e.g. GitHub release)
+    /// 
+    /// Note: Publication across multiple targets (e.g. NuGet feed followed by GitHub release)
+    /// is sequential and NOT atomic. If GitHub release fails after packages have been pushed
+    /// to the NuGet feed, the pushed packages remain published in the feed (partial release).
+    /// </summary>
     internal static async Task<(bool Success, string? Error)> RunReleasePipelineAsync(
         DeploymentJob job,
         Project project,

@@ -53,9 +53,20 @@ internal static class NuGetPackagePusher
             }
         }
 
+        var isFolderFeed = Directory.Exists(source);
+        var pushArgs = new List<string> { "nuget", "push", packagePath, "--api-key", apiKey, "--source", source };
+        if (isFolderFeed)
+        {
+            pushArgs.Add("--skip-duplicate");
+        }
+        else if (source.StartsWith("http://", StringComparison.OrdinalIgnoreCase))
+        {
+            pushArgs.Add("--allow-insecure-connections");
+        }
+
         var psi = DeployerRunner.CreateDotnetProcessStartInfo(
             workingDirectory,
-            ["nuget", "push", packagePath, "--api-key", apiKey, "--source", source, "--skip-duplicate"],
+            pushArgs,
             envVars: null,
             scrubKeys: NonNuGetPublishSecrets);
 
@@ -64,7 +75,8 @@ internal static class NuGetPackagePusher
         var exitCode = await processRunner.RunAsync(psi, async line =>
         {
             if (line.Contains("already exists", StringComparison.OrdinalIgnoreCase) ||
-                line.Contains("Conflict", StringComparison.OrdinalIgnoreCase))
+                line.Contains("Conflict", StringComparison.OrdinalIgnoreCase) ||
+                line.Contains("409", StringComparison.Ordinal))
             {
                 duplicateConflictDetected = true;
             }
@@ -77,11 +89,18 @@ internal static class NuGetPackagePusher
 
         if (exitCode != 0)
         {
+            if (duplicateConflictDetected)
+            {
+                var conflictError = $"Conflict: Package '{packageFileName}' already exists in feed '{source}' (HTTP 409 Conflict). Release failed closed to prevent serving unverified or conflicting revision bytes.";
+                await onLine($"[nuget.push] CONFLICT: {conflictError}");
+                return (false, conflictError);
+            }
+
             return (false, $"dotnet nuget push for '{packageFileName}' exited with code {exitCode}");
         }
 
         // Post-push verification for local folder feeds:
-        if (Directory.Exists(source))
+        if (isFolderFeed)
         {
             var pushedCandidates = Directory.GetFiles(source, packageFileName, SearchOption.AllDirectories);
             if (pushedCandidates.Length > 0)
@@ -90,16 +109,19 @@ internal static class NuGetPackagePusher
                 var localHash = ComputeFileSha256(packagePath);
                 if (!string.Equals(localHash, feedHash, StringComparison.OrdinalIgnoreCase))
                 {
-                    return (false, $"Conflict: Package '{packageFileName}' in feed '{source}' has different contents after push (hash mismatch: local {localHash[..12]} vs feed {feedHash[..12]}).");
+                    var conflictError = $"Conflict: Package '{packageFileName}' in feed '{source}' has different contents after push (hash mismatch: local {localHash[..12]} vs feed {feedHash[..12]}).";
+                    await onLine($"[nuget.push] CONFLICT: {conflictError}");
+                    return (false, conflictError);
                 }
             }
         }
         else if (duplicateConflictDetected)
         {
-            // For remote feeds, if duplicate was detected via --skip-duplicate,
-            // we cannot assume success without verifying remote artifact identity.
-            var conflictNotice = $"Warning: Duplicate package '{packageFileName}' was detected on feed '{source}'. Verify feed contents if this was not an idempotent push.";
-            await onLine($"[nuget.push] {conflictNotice}");
+            // For remote feeds, if duplicate or conflict was detected, NEVER declare success
+            // without verifying remote artifact identity.
+            var conflictError = $"Conflict: Duplicate package '{packageFileName}' was detected on remote feed '{source}' and remote artifact identity could not be verified. Release failed closed.";
+            await onLine($"[nuget.push] CONFLICT: {conflictError}");
+            return (false, conflictError);
         }
 
         return (true, null);

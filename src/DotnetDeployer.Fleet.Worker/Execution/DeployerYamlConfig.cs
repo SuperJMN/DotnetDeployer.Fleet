@@ -20,7 +20,8 @@ public sealed record DeployerConfigSummary(
     NuGetDeployConfig NuGet,
     GitHubDeployConfig GitHub,
     GitHubPagesDeployConfig GitHubPages,
-    IReadOnlySet<string> PublishSecretNames);
+    IReadOnlySet<string> PublishSecretNames,
+    IReadOnlySet<string> SigningSecretNames);
 
 public static class DeployerYamlReader
 {
@@ -29,6 +30,13 @@ public static class DeployerYamlReader
         "NUGET_API_KEY",
         "GITHUB_TOKEN",
         "GH_TOKEN"
+    };
+
+    private static readonly HashSet<string> WellKnownSigningSecrets = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "ANDROID_KEYSTORE_BASE64",
+        "ANDROID_SIGNING_STORE_PASS",
+        "ANDROID_SIGNING_KEY_PASS"
     };
 
     public static NuGetDeployConfig ReadNuGetConfig(string repoRoot) =>
@@ -60,6 +68,7 @@ public static class DeployerYamlReader
             return CreateDefaultConfig();
 
         var publishSecrets = new HashSet<string>(WellKnownPublishSecrets, StringComparer.OrdinalIgnoreCase);
+        var signingSecrets = new HashSet<string>(WellKnownSigningSecrets, StringComparer.OrdinalIgnoreCase);
 
         try
         {
@@ -77,9 +86,9 @@ public static class DeployerYamlReader
             var githubConfig = ParseGitHubSection(root, publishSecrets);
             var pagesConfig = ParsePagesSection(root);
 
-            CollectSigningSecrets(root, publishSecrets);
+            CollectSigningSecrets(root, signingSecrets);
 
-            return new DeployerConfigSummary(nugetConfig, githubConfig, pagesConfig, publishSecrets);
+            return new DeployerConfigSummary(nugetConfig, githubConfig, pagesConfig, publishSecrets, signingSecrets);
         }
         catch
         {
@@ -93,7 +102,8 @@ public static class DeployerYamlReader
             new NuGetDeployConfig(false, "https://api.nuget.org/v3/index.json", "NUGET_API_KEY"),
             new GitHubDeployConfig(false, null, null, "GITHUB_TOKEN"),
             new GitHubPagesDeployConfig(false),
-            new HashSet<string>(WellKnownPublishSecrets, StringComparer.OrdinalIgnoreCase));
+            new HashSet<string>(WellKnownPublishSecrets, StringComparer.OrdinalIgnoreCase),
+            new HashSet<string>(WellKnownSigningSecrets, StringComparer.OrdinalIgnoreCase));
     }
 
     private static NuGetDeployConfig ParseNuGetSection(YamlMappingNode root, HashSet<string> publishSecrets)
@@ -243,7 +253,7 @@ public static class DeployerYamlReader
         return new GitHubPagesDeployConfig(enabled);
     }
 
-    private static void CollectSigningSecrets(YamlNode node, HashSet<string> publishSecrets)
+    private static void CollectSigningSecrets(YamlNode node, HashSet<string> signingSecrets)
     {
         if (node is YamlMappingNode mapping)
         {
@@ -253,11 +263,11 @@ public static class DeployerYamlReader
                     string.Equals(scalar.Value, "signing", StringComparison.OrdinalIgnoreCase) &&
                     child.Value is YamlMappingNode signingMapping)
                 {
-                    ExtractSecretNamesFromSigning(signingMapping, publishSecrets);
+                    ExtractSecretNamesFromSigning(signingMapping, signingSecrets);
                 }
                 else
                 {
-                    CollectSigningSecrets(child.Value, publishSecrets);
+                    CollectSigningSecrets(child.Value, signingSecrets);
                 }
             }
         }
@@ -265,12 +275,12 @@ public static class DeployerYamlReader
         {
             foreach (var item in sequence.Children)
             {
-                CollectSigningSecrets(item, publishSecrets);
+                CollectSigningSecrets(item, signingSecrets);
             }
         }
     }
 
-    private static void ExtractSecretNamesFromSigning(YamlMappingNode signing, HashSet<string> publishSecrets)
+    private static void ExtractSecretNamesFromSigning(YamlMappingNode signing, HashSet<string> signingSecrets)
     {
         foreach (var entry in signing.Children)
         {
@@ -280,19 +290,14 @@ public static class DeployerYamlReader
                     nameNode is YamlScalarNode nameScalar &&
                     !string.IsNullOrWhiteSpace(nameScalar.Value))
                 {
-                    publishSecrets.Add(nameScalar.Value.Trim());
+                    signingSecrets.Add(nameScalar.Value.Trim());
                 }
                 else if (TryGetMappingValue(valueMapping, "key", out var keyNode) &&
                          keyNode is YamlScalarNode keyScalar &&
                          !string.IsNullOrWhiteSpace(keyScalar.Value))
                 {
-                    publishSecrets.Add(keyScalar.Value.Trim());
+                    signingSecrets.Add(keyScalar.Value.Trim());
                 }
-            }
-            else if (entry.Value is YamlScalarNode scalar && !string.IsNullOrWhiteSpace(scalar.Value))
-            {
-                // e.g. keyAlias: android is not a secret, but if env var was named directly
-                publishSecrets.Add(scalar.Value.Trim());
             }
         }
     }

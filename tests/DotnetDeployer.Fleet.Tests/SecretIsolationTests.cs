@@ -8,7 +8,7 @@ namespace DotnetDeployer.Fleet.Tests;
 public sealed class SecretIsolationTests
 {
     [Fact]
-    public void Secrets_are_partitioned_excluding_all_publish_secrets_from_build_environment()
+    public void Secrets_are_partitioned_for_test_and_pack_environments()
     {
         var allSecrets = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
         {
@@ -18,9 +18,10 @@ public sealed class SecretIsolationTests
             ["GH_TOKEN"] = "secret-gh-token",
             ["CUSTOM_GH_TOKEN"] = "secret-custom-gh-token",
             ["ANDROID_KEYSTORE_BASE64"] = "keystore-base64",
+            ["ANDROID_SIGNING_STORE_PASS"] = "store-pass-123",
+            ["ANDROID_SIGNING_KEY_PASS"] = "key-pass-123",
             ["PRIVATE_FEED_RESTORE_TOKEN"] = "restore-pat",
-            ["VSS_NUGET_EXTERNAL_FEED_ENDPOINTS"] = "endpoint-json",
-            ["SIGNING_CERT_PWD"] = "cert-secret"
+            ["VSS_NUGET_EXTERNAL_FEED_ENDPOINTS"] = "endpoint-json"
         };
 
         var publishSecretNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
@@ -29,30 +30,53 @@ public sealed class SecretIsolationTests
             "CUSTOM_PUSH_KEY",
             "GITHUB_TOKEN",
             "GH_TOKEN",
-            "CUSTOM_GH_TOKEN",
-            "ANDROID_KEYSTORE_BASE64"
+            "CUSTOM_GH_TOKEN"
         };
 
+        var signingSecretNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+        {
+            "ANDROID_KEYSTORE_BASE64",
+            "ANDROID_SIGNING_STORE_PASS",
+            "ANDROID_SIGNING_KEY_PASS"
+        };
+
+        // 1. Build and test environment: scrubs both publish credentials AND signing secrets
+        var buildScrubKeys = publishSecretNames.Concat(signingSecretNames).ToHashSet(StringComparer.OrdinalIgnoreCase);
         var buildEnvVars = allSecrets
-            .Where(kvp => !publishSecretNames.Contains(kvp.Key))
+            .Where(kvp => !buildScrubKeys.Contains(kvp.Key))
             .ToDictionary(kvp => kvp.Key, kvp => kvp.Value, StringComparer.OrdinalIgnoreCase);
 
-        // Publish credentials must be strictly excluded from build/test environment
         buildEnvVars.Should().NotContainKey("NUGET_API_KEY");
         buildEnvVars.Should().NotContainKey("CUSTOM_PUSH_KEY");
         buildEnvVars.Should().NotContainKey("GITHUB_TOKEN");
         buildEnvVars.Should().NotContainKey("GH_TOKEN");
         buildEnvVars.Should().NotContainKey("CUSTOM_GH_TOKEN");
         buildEnvVars.Should().NotContainKey("ANDROID_KEYSTORE_BASE64");
-
-        // Restore and other non-publish secrets MUST be preserved
+        buildEnvVars.Should().NotContainKey("ANDROID_SIGNING_STORE_PASS");
+        buildEnvVars.Should().NotContainKey("ANDROID_SIGNING_KEY_PASS");
         buildEnvVars.Should().ContainKey("PRIVATE_FEED_RESTORE_TOKEN").WhoseValue.Should().Be("restore-pat");
         buildEnvVars.Should().ContainKey("VSS_NUGET_EXTERNAL_FEED_ENDPOINTS").WhoseValue.Should().Be("endpoint-json");
-        buildEnvVars.Should().ContainKey("SIGNING_CERT_PWD").WhoseValue.Should().Be("cert-secret");
+
+        // 2. Pack environment: scrubs publication/push tokens, but INCLUDES signing secrets for packaging
+        var packScrubKeys = publishSecretNames;
+        var packEnvVars = allSecrets
+            .Where(kvp => !packScrubKeys.Contains(kvp.Key))
+            .ToDictionary(kvp => kvp.Key, kvp => kvp.Value, StringComparer.OrdinalIgnoreCase);
+
+        packEnvVars.Should().NotContainKey("NUGET_API_KEY");
+        packEnvVars.Should().NotContainKey("CUSTOM_PUSH_KEY");
+        packEnvVars.Should().NotContainKey("GITHUB_TOKEN");
+        packEnvVars.Should().NotContainKey("GH_TOKEN");
+        packEnvVars.Should().NotContainKey("CUSTOM_GH_TOKEN");
+        // Signing secrets MUST be present for APK/package signing
+        packEnvVars.Should().ContainKey("ANDROID_KEYSTORE_BASE64").WhoseValue.Should().Be("keystore-base64");
+        packEnvVars.Should().ContainKey("ANDROID_SIGNING_STORE_PASS").WhoseValue.Should().Be("store-pass-123");
+        packEnvVars.Should().ContainKey("ANDROID_SIGNING_KEY_PASS").WhoseValue.Should().Be("key-pass-123");
+        packEnvVars.Should().ContainKey("PRIVATE_FEED_RESTORE_TOKEN").WhoseValue.Should().Be("restore-pat");
     }
 
     [Fact]
-    public void DeployerYamlReader_extracts_all_publish_secret_names()
+    public void DeployerYamlReader_extracts_publish_secrets_and_signing_secrets_separately()
     {
         var yaml = """
             github:
@@ -66,6 +90,10 @@ public sealed class SecretIsolationTests
                     keystore:
                       from: env
                       name: "MY_KEYSTORE_SECRET"
+                    keyAlias: android
+                    storePassword:
+                      from: env
+                      name: "MY_STORE_PASS"
             nuget:
               enabled: true
               apiKeyEnvVar: "MY_NUGET_SECRET"
@@ -73,12 +101,76 @@ public sealed class SecretIsolationTests
 
         var config = DeployerYamlReader.ParseConfig(yaml);
 
+        // Publish secrets: only publication tokens
         config.PublishSecretNames.Should().Contain("NUGET_API_KEY");
         config.PublishSecretNames.Should().Contain("GITHUB_TOKEN");
         config.PublishSecretNames.Should().Contain("GH_TOKEN");
         config.PublishSecretNames.Should().Contain("MY_NUGET_SECRET");
         config.PublishSecretNames.Should().Contain("MY_GH_SECRET");
-        config.PublishSecretNames.Should().Contain("MY_KEYSTORE_SECRET");
+        config.PublishSecretNames.Should().NotContain("MY_KEYSTORE_SECRET");
+        config.PublishSecretNames.Should().NotContain("MY_STORE_PASS");
+
+        // Signing secrets: signing credentials needed for packaging
+        config.SigningSecretNames.Should().Contain("ANDROID_KEYSTORE_BASE64");
+        config.SigningSecretNames.Should().Contain("ANDROID_SIGNING_STORE_PASS");
+        config.SigningSecretNames.Should().Contain("ANDROID_SIGNING_KEY_PASS");
+        config.SigningSecretNames.Should().Contain("MY_KEYSTORE_SECRET");
+        config.SigningSecretNames.Should().Contain("MY_STORE_PASS");
+        config.SigningSecretNames.Should().NotContain("android", "keyAlias is a literal string and must not be treated as a secret name");
+    }
+
+    [Fact]
+    public void Fleet_deployer_yaml_separates_android_signing_from_publish_tokens()
+    {
+        var fleetYaml = """
+            version: 1
+            github:
+              enabled: true
+              owner: SuperJMN
+              repo: DotnetDeployer.Fleet
+              token:
+                from: env
+                name: GITHUB_TOKEN
+              outputDir: artifacts
+              packages:
+                - project: src/DotnetDeployer.Fleet.Android/DotnetDeployer.Fleet.Android.csproj
+                  formats:
+                    - type: Apk
+                      arch: [arm64]
+                      signing:
+                        keystore:
+                          from: env
+                          name: ANDROID_KEYSTORE_BASE64
+                          encoding: base64
+                        storePassword:
+                          from: env
+                          name: ANDROID_SIGNING_STORE_PASS
+                        keyAlias: android
+                        keyPassword:
+                          from: env
+                          name: ANDROID_SIGNING_KEY_PASS
+            nuget:
+              enabled: true
+              source: https://api.nuget.org/v3/index.json
+              apiKey:
+                from: env
+                name: NUGET_API_KEY
+            """;
+
+        var config = DeployerYamlReader.ParseConfig(fleetYaml);
+
+        // Publish secrets
+        config.PublishSecretNames.Should().Contain("NUGET_API_KEY");
+        config.PublishSecretNames.Should().Contain("GITHUB_TOKEN");
+        config.PublishSecretNames.Should().NotContain("ANDROID_KEYSTORE_BASE64");
+        config.PublishSecretNames.Should().NotContain("ANDROID_SIGNING_STORE_PASS");
+        config.PublishSecretNames.Should().NotContain("ANDROID_SIGNING_KEY_PASS");
+
+        // Signing secrets
+        config.SigningSecretNames.Should().Contain("ANDROID_KEYSTORE_BASE64");
+        config.SigningSecretNames.Should().Contain("ANDROID_SIGNING_STORE_PASS");
+        config.SigningSecretNames.Should().Contain("ANDROID_SIGNING_KEY_PASS");
+        config.SigningSecretNames.Should().NotContain("android");
     }
 
     [Fact]
@@ -172,6 +264,129 @@ public sealed class SecretIsolationTests
 
             // Verify: sentinel restore credential IS present in child process output
             output.Should().Contain(sentinelRestore);
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable("NUGET_API_KEY", null);
+            Environment.SetEnvironmentVariable("GITHUB_TOKEN", null);
+        }
+    }
+
+    [Fact]
+    public async Task Real_process_pack_environment_receives_signing_secret_while_tests_receive_no_push_tokens()
+    {
+        const string sentinelPushNuget = "SENTINEL_PUSH_NUGET_KEY_123";
+        const string sentinelPushGh = "SENTINEL_PUSH_GH_TOKEN_456";
+        const string sentinelSigningPass = "SENTINEL_ANDROID_STORE_PASS_789";
+        const string sentinelRestore = "SENTINEL_RESTORE_SECRET_ABC";
+
+        // Ambient secrets present on host
+        Environment.SetEnvironmentVariable("NUGET_API_KEY", sentinelPushNuget);
+        Environment.SetEnvironmentVariable("GITHUB_TOKEN", sentinelPushGh);
+
+        try
+        {
+            var publishScrubKeys = new HashSet<string>(["NUGET_API_KEY", "GITHUB_TOKEN"], StringComparer.OrdinalIgnoreCase);
+            var signingKeys = new HashSet<string>(["ANDROID_SIGNING_STORE_PASS"], StringComparer.OrdinalIgnoreCase);
+
+            var allConfiguredSecrets = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["NUGET_API_KEY"] = sentinelPushNuget,
+                ["GITHUB_TOKEN"] = sentinelPushGh,
+                ["ANDROID_SIGNING_STORE_PASS"] = sentinelSigningPass,
+                ["PRIVATE_FEED_RESTORE_TOKEN"] = sentinelRestore
+            };
+
+            var isWindows = OperatingSystem.IsWindows();
+            var shellExe = isWindows ? "cmd.exe" : "sh";
+
+            // 1. Solution test environment: scrubs both publish keys AND signing keys
+            var buildScrubKeys = publishScrubKeys.Concat(signingKeys).ToHashSet(StringComparer.OrdinalIgnoreCase);
+            var testEnvVars = allConfiguredSecrets
+                .Where(kvp => !buildScrubKeys.Contains(kvp.Key))
+                .ToDictionary(kvp => kvp.Key, kvp => kvp.Value, StringComparer.OrdinalIgnoreCase);
+
+            var testPsi = new ProcessStartInfo(shellExe)
+            {
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                UseShellExecute = false
+            };
+            if (isWindows)
+            {
+                testPsi.ArgumentList.Add("/c");
+                testPsi.ArgumentList.Add("echo NUGET=%NUGET_API_KEY%|GH=%GITHUB_TOKEN%|SIGNING=%ANDROID_SIGNING_STORE_PASS%|RESTORE=%PRIVATE_FEED_RESTORE_TOKEN%");
+            }
+            else
+            {
+                testPsi.ArgumentList.Add("-c");
+                testPsi.ArgumentList.Add("echo \"NUGET=$NUGET_API_KEY|GH=$GITHUB_TOKEN|SIGNING=$ANDROID_SIGNING_STORE_PASS|RESTORE=$PRIVATE_FEED_RESTORE_TOKEN\"");
+            }
+
+            DeployerRunner.ApplyBuildEnvironment(testPsi);
+            foreach (var key in buildScrubKeys)
+                testPsi.Environment.Remove(key);
+            foreach (var (k, v) in testEnvVars)
+                testPsi.Environment[k] = v;
+
+            using (var testProc = Process.Start(testPsi)!)
+            {
+                var testOutput = await testProc.StandardOutput.ReadToEndAsync();
+                await testProc.WaitForExitAsync();
+                testProc.ExitCode.Should().Be(0);
+
+                // Tests MUST NOT receive push tokens
+                testOutput.Should().NotContain(sentinelPushNuget);
+                testOutput.Should().NotContain(sentinelPushGh);
+                // Tests MUST NOT receive signing secrets
+                testOutput.Should().NotContain(sentinelSigningPass);
+                // Tests MUST receive restore tokens
+                testOutput.Should().Contain(sentinelRestore);
+            }
+
+            // 2. Pack environment: scrubs publication tokens, but PASSES signing secrets to DotnetDeployer
+            var packScrubKeys = publishScrubKeys;
+            var packEnvVars = allConfiguredSecrets
+                .Where(kvp => !packScrubKeys.Contains(kvp.Key))
+                .ToDictionary(kvp => kvp.Key, kvp => kvp.Value, StringComparer.OrdinalIgnoreCase);
+
+            var packPsi = new ProcessStartInfo(shellExe)
+            {
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                UseShellExecute = false
+            };
+            if (isWindows)
+            {
+                packPsi.ArgumentList.Add("/c");
+                packPsi.ArgumentList.Add("echo NUGET=%NUGET_API_KEY%|GH=%GITHUB_TOKEN%|SIGNING=%ANDROID_SIGNING_STORE_PASS%|RESTORE=%PRIVATE_FEED_RESTORE_TOKEN%");
+            }
+            else
+            {
+                packPsi.ArgumentList.Add("-c");
+                packPsi.ArgumentList.Add("echo \"NUGET=$NUGET_API_KEY|GH=$GITHUB_TOKEN|SIGNING=$ANDROID_SIGNING_STORE_PASS|RESTORE=$PRIVATE_FEED_RESTORE_TOKEN\"");
+            }
+
+            DeployerRunner.ApplyBuildEnvironment(packPsi);
+            foreach (var key in packScrubKeys)
+                packPsi.Environment.Remove(key);
+            foreach (var (k, v) in packEnvVars)
+                packPsi.Environment[k] = v;
+
+            using (var packProc = Process.Start(packPsi)!)
+            {
+                var packOutput = await packProc.StandardOutput.ReadToEndAsync();
+                await packProc.WaitForExitAsync();
+                packProc.ExitCode.Should().Be(0);
+
+                // Pack MUST NOT receive push tokens
+                packOutput.Should().NotContain(sentinelPushNuget);
+                packOutput.Should().NotContain(sentinelPushGh);
+                // Pack MUST receive signing secrets
+                packOutput.Should().Contain(sentinelSigningPass);
+                // Pack MUST receive restore tokens
+                packOutput.Should().Contain(sentinelRestore);
+            }
         }
         finally
         {
