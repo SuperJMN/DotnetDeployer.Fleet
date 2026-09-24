@@ -505,7 +505,7 @@ public sealed class ReleaseJobsStagingDemonstrationTests : IDisposable
         var afterFirst = await jobSource.GetNuGetReleaseAsync(firstJob.Id, sha);
         afterFirst.Should().NotBeNull();
         afterFirst!.Progress.Count(p => p.State == NuGetReleasePackageState.Complete).Should().Be(1);
-        afterFirst.Progress.Count(p => p.State == NuGetReleasePackageState.Incomplete).Should().Be(1);
+        afterFirst.Progress.Count(p => p.State == NuGetReleasePackageState.AwaitingIndex).Should().Be(1);
         var immutableHash = afterFirst.Manifest.Packages.ToDictionary(p => p.Id, p => p.Sha256);
 
         // Project inventory is editable. A retry must trust the validated snapshot,
