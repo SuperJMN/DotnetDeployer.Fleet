@@ -449,8 +449,7 @@ public sealed class ReleaseJobsStagingDemonstrationTests : IDisposable
         var finishedJob = await storage.GetJobAsync(job.Id);
         finishedJob.Should().NotBeNull();
         finishedJob!.Status.Should().Be(JobStatus.Failed);
-        finishedJob.ErrorMessage.Should().Contain("already exists in feed");
-        finishedJob.ErrorMessage.Should().Contain("with different contents");
+        finishedJob.ErrorMessage.Should().Contain("conflicts with the immutable release manifest");
 
         var phases = await storage.GetJobPhasesAsync(job.Id);
         var pushPhase = phases.FirstOrDefault(p => p.Name == "worker.nuget.push");
@@ -461,7 +460,7 @@ public sealed class ReleaseJobsStagingDemonstrationTests : IDisposable
         var logs = await storage.GetLogsAsync(job.Id);
         var logLines = logs.Select(l => l.Line).ToList();
         logLines.Should().NotBeEmpty();
-        logLines.Should().Contain(l => l.Contains("already exists in feed") && l.Contains("with different contents"));
+        logLines.Should().Contain(l => l.Contains("conflicts with the immutable release manifest"));
         logLines.Should().NotContain(l => l.Contains("All NuGet packages pushed successfully"));
 
         // Assert: Staging feed file was NOT overwritten and preserves initial conflicting bytes
@@ -469,6 +468,161 @@ public sealed class ReleaseJobsStagingDemonstrationTests : IDisposable
         var currentBytes = await File.ReadAllBytesAsync(existingPkgPath);
         var currentHash = Convert.ToHexString(SHA256.HashData(currentBytes));
         currentHash.Should().Be(initialHash);
+    }
+
+    [Fact]
+    public async Task Two_package_release_resumes_on_new_worker_without_repacking_after_second_push_fails()
+    {
+        var feed = CreateTempDir("staging-multi-feed");
+        var (storage, _, worker, _, jobSource) = await SetupCoordinatorAndWorkerAsync(feed);
+        var (repo, sha) = await CreateTestRepoAsync("staging-multi", feed, twoPackages: true);
+        var project = new Project
+        {
+            Id = Guid.NewGuid(), Name = "MultiPackage", GitUrl = repo, Branch = "main",
+            RunTestsBeforeDeploy = true, ExpectedPackageIds = ["DemoLib", "DemoExtra"]
+        };
+        await storage.AddProjectAsync(project);
+
+        var firstJob = new DeploymentJob
+        {
+            Id = Guid.NewGuid(), ProjectId = project.Id, Kind = JobKind.Deploy,
+            TriggerCommitSha = sha, Status = JobStatus.Assigned, WorkerId = worker.Id
+        };
+        await storage.AddJobAsync(firstJob);
+
+        var pushes = 0;
+        var firstWorker = NewStagingWorker(storage, jobSource, worker.Id, async (package, source) =>
+        {
+            pushes++;
+            if (pushes == 2) return (false, "Simulated second package failure");
+            File.Copy(package, Path.Combine(source, Path.GetFileName(package)));
+            return (true, (string?)null);
+        });
+        await firstWorker.ExecuteJobAsync(firstJob, CancellationToken.None);
+
+        (await storage.GetJobAsync(firstJob.Id))!.Status.Should().Be(JobStatus.Failed);
+        Directory.GetFiles(feed, "*.nupkg", SearchOption.AllDirectories).Should().HaveCount(1);
+        var afterFirst = await jobSource.GetNuGetReleaseAsync(firstJob.Id, sha);
+        afterFirst.Should().NotBeNull();
+        afterFirst!.Progress.Count(p => p.State == NuGetReleasePackageState.Complete).Should().Be(1);
+        afterFirst.Progress.Count(p => p.State == NuGetReleasePackageState.Incomplete).Should().Be(1);
+        var immutableHash = afterFirst.Manifest.Packages.ToDictionary(p => p.Id, p => p.Sha256);
+
+        // Project inventory is editable. A retry must trust the validated snapshot,
+        // not current project settings, after one package is already public.
+        project.ExpectedPackageIds = [];
+        project.GitUrl = Path.Combine(repo, "source-no-longer-available");
+        await storage.UpdateProjectAsync(project);
+
+        var retryJob = new DeploymentJob
+        {
+            Id = Guid.NewGuid(), ProjectId = project.Id, Kind = JobKind.Deploy,
+            TriggerCommitSha = sha, Status = JobStatus.Assigned, WorkerId = worker.Id
+        };
+        await storage.AddJobAsync(retryJob);
+        var retryPushes = 0;
+        var freshWorker = NewStagingWorker(storage, jobSource, worker.Id, (package, source) =>
+        {
+            retryPushes++;
+            File.Copy(package, Path.Combine(source, Path.GetFileName(package)));
+            return Task.FromResult<(bool, string?)>((true, null));
+        });
+        await freshWorker.ExecuteJobAsync(retryJob, CancellationToken.None);
+
+        (await storage.GetJobAsync(retryJob.Id))!.Status.Should().Be(JobStatus.Succeeded);
+        retryPushes.Should().Be(1);
+        var retryPhases = await storage.GetJobPhasesAsync(retryJob.Id);
+        retryPhases.Select(p => p.Name).Should().NotContain(["worker.solution.build", "worker.solution.test", "worker.deployer.pack"]);
+        retryPhases.Select(p => p.Name).Should().NotContain("worker.git.clone");
+        var completed = await jobSource.GetNuGetReleaseAsync(retryJob.Id, sha);
+        completed!.Progress.Should().OnlyContain(p => p.State == NuGetReleasePackageState.Complete);
+        completed.Manifest.Packages.ToDictionary(p => p.Id, p => p.Sha256).Should().BeEquivalentTo(immutableHash);
+        Directory.GetFiles(feed, "*.nupkg", SearchOption.AllDirectories).Should().HaveCount(2);
+    }
+
+    [Theory]
+    [InlineData("equivalent-409", true, NuGetReleasePackageState.Complete)]
+    [InlineData("conflicting-409", false, NuGetReleasePackageState.InterventionRequired)]
+    [InlineData("ambiguous-timeout", true, NuGetReleasePackageState.Complete)]
+    [InlineData("delayed-availability", true, NuGetReleasePackageState.Complete)]
+    public async Task Push_outcomes_are_decided_by_downloaded_staging_feed_content(
+        string scenario, bool shouldSucceed, NuGetReleasePackageState expectedState)
+    {
+        var feed = CreateTempDir("staging-" + scenario);
+        var (storage, _, worker, _, jobSource) = await SetupCoordinatorAndWorkerAsync(feed);
+        var (repo, sha) = await CreateTestRepoAsync(scenario, feed);
+        var project = new Project
+        {
+            Id = Guid.NewGuid(), Name = "PushOutcome" + scenario, GitUrl = repo,
+            Branch = "main", RunTestsBeforeDeploy = true, ExpectedPackageIds = ["DemoLib"]
+        };
+        await storage.AddProjectAsync(project);
+        var job = new DeploymentJob
+        {
+            Id = Guid.NewGuid(), ProjectId = project.Id, Kind = JobKind.Deploy,
+            TriggerCommitSha = sha, Status = JobStatus.Assigned, WorkerId = worker.Id
+        };
+        await storage.AddJobAsync(job);
+
+        var simulatedWorker = NewStagingWorker(storage, jobSource, worker.Id, async (package, source) =>
+        {
+            var destination = Path.Combine(source, Path.GetFileName(package));
+            if (scenario == "delayed-availability")
+            {
+                _ = Task.Run(async () =>
+                {
+                    await Task.Delay(80);
+                    var pending = destination + ".pending";
+                    File.Copy(package, pending);
+                    File.Move(pending, destination);
+                });
+                return (true, (string?)null);
+            }
+
+            File.Copy(package, destination);
+            if (scenario == "conflicting-409")
+                await File.WriteAllBytesAsync(destination, [1, 2, 3, 4]);
+            if (scenario == "ambiguous-timeout")
+                throw new TimeoutException("Simulated lost push response");
+            return (false, "HTTP 409 Conflict");
+        });
+        await simulatedWorker.ExecuteJobAsync(job, CancellationToken.None);
+
+        (await storage.GetJobAsync(job.Id))!.Status.Should().Be(shouldSucceed ? JobStatus.Succeeded : JobStatus.Failed);
+        var release = await jobSource.GetNuGetReleaseAsync(job.Id, sha);
+        release.Should().NotBeNull();
+        release!.Progress.Single().State.Should().Be(expectedState);
+        var feedPackage = Directory.GetFiles(feed, "*.nupkg", SearchOption.AllDirectories).Single();
+        if (shouldSucceed)
+            NuGetPackageReader.ReadPackageId(feedPackage).Should().Be("DemoLib");
+    }
+
+    private RemoteWorkerBackgroundService NewStagingWorker(IFleetStorage storage,
+        DirectStorageWorkerJobSource source, Guid workerId,
+        Func<string, string, Task<(bool Success, string? Error)>> onPush)
+    {
+        var options = Options.Create(new WorkerOptions
+        {
+            Id = workerId,
+            RepoStoragePath = CreateTempDir("worker-restart"),
+            JobActionPollIntervalSeconds = 0.05
+        });
+        return new SimulatedPushWorker(source, new DirectStorageWorkerCoordinatorClient(storage), options, onPush);
+    }
+
+    private sealed class SimulatedPushWorker(
+        IWorkerJobSource jobSource,
+        IWorkerCoordinatorClient coordinator,
+        IOptions<WorkerOptions> options,
+        Func<string, string, Task<(bool Success, string? Error)>> onPush)
+        : RemoteWorkerBackgroundService(jobSource, coordinator, options, NullLogger<RemoteWorkerBackgroundService>.Instance)
+    {
+        internal override TimeSpan NuGetAvailabilityTimeout => TimeSpan.FromMilliseconds(300);
+        internal override TimeSpan NuGetAvailabilityPollInterval => TimeSpan.FromMilliseconds(20);
+
+        internal override Task<(bool Success, string? Error)> PushPackageAsync(string workingDirectory,
+            string packagePath, string apiKey, string source, Func<string, Task> onLine, CancellationToken ct) =>
+            onPush(packagePath, source);
     }
 
     [Fact]
@@ -742,7 +896,8 @@ public sealed class ReleaseJobsStagingDemonstrationTests : IDisposable
         bool failBuild = false,
         bool failTest = false,
         string version = "1.0.0",
-        string tag = "v1.0.0")
+        string tag = "v1.0.0",
+        bool twoPackages = false)
     {
         var repoDir = CreateTempDir($"repo-{name}");
         var srcDir = Path.Combine(repoDir, "src", "DemoLib");
@@ -767,6 +922,23 @@ public sealed class ReleaseJobsStagingDemonstrationTests : IDisposable
               </PropertyGroup>
             </Project>
             """);
+
+        if (twoPackages)
+        {
+            var secondDir = Path.Combine(repoDir, "src", "DemoExtra");
+            Directory.CreateDirectory(secondDir);
+            await File.WriteAllTextAsync(Path.Combine(secondDir, "Class1.cs"), "namespace DemoExtra; public class Class1 { }");
+            await File.WriteAllTextAsync(Path.Combine(secondDir, "DemoExtra.csproj"), $"""
+                <Project Sdk="Microsoft.NET.Sdk">
+                  <PropertyGroup>
+                    <TargetFramework>net10.0</TargetFramework>
+                    <Version>{version}</Version>
+                    <RepositoryType>git</RepositoryType>
+                    <RepositoryUrl>{repoDir}</RepositoryUrl>
+                  </PropertyGroup>
+                </Project>
+                """);
+        }
 
         var testCode = failTest
             ? """
@@ -825,10 +997,13 @@ public sealed class ReleaseJobsStagingDemonstrationTests : IDisposable
                 name: NUGET_API_KEY
               packages:
                 - project: src/DemoLib/DemoLib.csproj
+            {(twoPackages ? "    - project: src/DemoExtra/DemoExtra.csproj" : "")}
             """);
 
         await RunDotnetCommandAsync(repoDir, "new", "sln", "-n", "Demo");
         await RunDotnetCommandAsync(repoDir, "sln", "add", "src/DemoLib/DemoLib.csproj", "tests/DemoLibTests/DemoLibTests.csproj");
+        if (twoPackages)
+            await RunDotnetCommandAsync(repoDir, "sln", "add", "src/DemoExtra/DemoExtra.csproj");
 
         await RunGitCommandAsync(repoDir, "init", "-b", "main");
         await RunGitCommandAsync(repoDir, "config", "user.email", "test@fleet.local");
@@ -983,6 +1158,7 @@ public sealed class ReleaseJobsStagingDemonstrationTests : IDisposable
 
     internal sealed class DirectStorageWorkerJobSource(IFleetStorage storage, PackageArtifactStore artifactStore) : IWorkerJobSource
     {
+        private readonly NuGetReleaseStore releaseStore = new(Path.Combine(Path.GetTempPath(), "fleet-release-tests", Guid.NewGuid().ToString("N")));
         public Action<Guid, PhaseEvent>? OnPhaseEvent { get; set; }
 
         public Task<DeploymentJob?> GetNextJobAsync(Guid workerId, CancellationToken ct = default)
@@ -1014,6 +1190,34 @@ public sealed class ReleaseJobsStagingDemonstrationTests : IDisposable
             var job = await storage.GetJobAsync(jobId, CancellationToken.None)
                 ?? throw new InvalidOperationException($"Job {jobId} not found");
             await artifactStore.SaveAsync(job, relativePath, content, CancellationToken.None);
+        }
+
+        public async Task<NuGetReleaseSnapshot?> GetNuGetReleaseAsync(Guid jobId, string commitSha, CancellationToken ct = default)
+        {
+            var job = await storage.GetJobAsync(jobId, ct) ?? throw new InvalidOperationException();
+            return await releaseStore.GetAsync(job.ProjectId, commitSha, ct);
+        }
+
+        public async Task UploadNuGetReleasePackageAsync(Guid jobId, string commitSha, string packageId, Stream content, CancellationToken ct = default)
+        {
+            var job = await storage.GetJobAsync(jobId, ct) ?? throw new InvalidOperationException();
+            await releaseStore.UploadPackageAsync(job.ProjectId, commitSha, packageId, content, ct);
+        }
+
+        public async Task<Stream> DownloadNuGetReleasePackageAsync(Guid jobId, string commitSha, string packageId, CancellationToken ct = default)
+        {
+            var job = await storage.GetJobAsync(jobId, ct) ?? throw new InvalidOperationException();
+            return releaseStore.OpenPackage(job.ProjectId, commitSha, packageId);
+        }
+
+        public Task<NuGetReleaseSnapshot> CreateNuGetReleaseAsync(Guid jobId, NuGetReleaseManifest manifest, CancellationToken ct = default)
+            => releaseStore.CreateAsync(manifest, ct);
+
+        public async Task<NuGetReleaseSnapshot> SetNuGetReleasePackageStateAsync(Guid jobId, string commitSha, string packageId,
+            NuGetReleasePackageState state, string? detail, CancellationToken ct = default)
+        {
+            var job = await storage.GetJobAsync(jobId, ct) ?? throw new InvalidOperationException();
+            return await releaseStore.SetStateAsync(job.ProjectId, commitSha, packageId, state, detail, ct);
         }
 
         public async Task ReportJobCompletedAsync(Guid jobId, bool success, string? errorMessage, CancellationToken ct = default)

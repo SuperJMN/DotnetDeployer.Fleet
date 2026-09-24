@@ -96,6 +96,9 @@ public static class CoordinatorHostBuilder
         builder.Services.AddSingleton<LogBroadcaster>();
         builder.Services.AddSingleton(_ =>
             new PackageArtifactStore(builder.Configuration["Artifacts:RootDir"] ?? "fleet-artifacts"));
+        builder.Services.AddSingleton(_ =>
+            new NuGetReleaseStore(builder.Configuration["Releases:RootDir"]
+                ?? Path.Combine(builder.Configuration["Artifacts:RootDir"] ?? "fleet-artifacts", "nuget-releases")));
         builder.Services.AddSingleton(sp =>
             new ProjectIconStore(
                 builder.Configuration["ProjectIcons:RootDir"] ?? "project-icons",

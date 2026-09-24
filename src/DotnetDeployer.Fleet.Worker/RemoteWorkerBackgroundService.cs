@@ -238,6 +238,66 @@ public class RemoteWorkerBackgroundService : BackgroundService
                     return;
                 }
 
+                // A prepared release is already tied to a validated Git SHA and
+                // durable package bytes. Recover NuGet before touching Git: a deleted
+                // branch or Git outage must not strand a partially published version.
+                var existingRelease = job.Kind == JobKind.Deploy
+                    ? await jobSource.GetNuGetReleaseAsync(job.Id, job.TriggerCommitSha, jobCt)
+                    : null;
+                var nugetRecovered = false;
+                if (existingRelease is not null)
+                {
+                    if (existingRelease.Manifest.ProjectId != project.Id
+                        || !string.Equals(existingRelease.Manifest.CommitSha, job.TriggerCommitSha, StringComparison.OrdinalIgnoreCase))
+                        throw new InvalidOperationException("Stored release does not match the requested project and commit.");
+
+                    var resumeGlobalSecrets = await coordinator.GetGlobalSecretsAsync(jobCt);
+                    var resumeProjectSecrets = await coordinator.GetProjectSecretsAsync(project.Id, jobCt);
+                    var resumeSecrets = resumeGlobalSecrets.Concat(resumeProjectSecrets)
+                        .GroupBy(s => s.Name)
+                        .ToDictionary(g => g.Key, g => g.Last().Value, StringComparer.OrdinalIgnoreCase);
+                    resumeSecrets.TryGetValue(existingRelease.Manifest.ApiKeySecretName, out var resumeApiKey);
+                    if (string.IsNullOrWhiteSpace(resumeApiKey))
+                        resumeSecrets.TryGetValue("NUGET_API_KEY", out resumeApiKey);
+
+                    await Log($"[nuget.release] Resuming durable manifest for {job.TriggerCommitSha}; Git, build, tests and pack are not required for NuGet recovery.");
+                    await EmitPhaseAsync(job.Id, PhaseEventKind.Start, "worker.nuget.push",
+                        attrs: new() { ["source"] = existingRelease.Manifest.Source }, ct: jobCt);
+                    var resumeSw = System.Diagnostics.Stopwatch.StartNew();
+                    (bool Success, string? Error) recovered = (false, null);
+                    try
+                    {
+                        recovered = await PublishManifestAsync(job, existingRelease, resumeApiKey, repoStoragePath, Log, jobCt);
+                    }
+                    finally
+                    {
+                        resumeSw.Stop();
+                        await EmitPhaseAsync(job.Id, PhaseEventKind.End, "worker.nuget.push",
+                            status: recovered.Success ? PhaseStatus.Ok : PhaseStatus.Fail,
+                            durationMs: resumeSw.ElapsedMilliseconds, ct: jobCt);
+                        await logBuffer.FlushAsync();
+                    }
+                    if (aborted)
+                    {
+                        logger.LogWarning("Job {JobId} aborted by coordinator instruction; not reporting completion.", job.Id);
+                        return;
+                    }
+                    jobCt.ThrowIfCancellationRequested();
+                    if (!recovered.Success)
+                    {
+                        await Log($"=== Deployment FAILED: {recovered.Error} ===");
+                        await jobSource.ReportJobCompletedAsync(job.Id, false, recovered.Error, ct);
+                        return;
+                    }
+                    nugetRecovered = true;
+                    if (!existingRelease.Manifest.RequiresGitHubPublish)
+                    {
+                        await Log("=== All NuGet packages pushed successfully and verified ===");
+                        await jobSource.ReportJobCompletedAsync(job.Id, true, null, ct);
+                        return;
+                    }
+                }
+
                 // worker.git.clone — the worker emits its own phases for steps that
                 // happen BEFORE DotnetDeployer is invoked (clone/fetch). DotnetDeployer
                 // emits the rest from inside the build.
@@ -346,9 +406,10 @@ public class RemoteWorkerBackgroundService : BackgroundService
                     githubToken = tokenFromGh;
                 }
 
-                var isPackageRelease = job.Kind == JobKind.Deploy && (nugetConfig.Enabled || project.ExpectedPackageIds.Count > 0);
+                var isPackageRelease = job.Kind == JobKind.Deploy
+                    && (nugetConfig.Enabled || project.ExpectedPackageIds.Count > 0 || existingRelease is not null);
 
-                if (isPackageRelease && project.ExpectedPackageIds.Count == 0)
+                if (isPackageRelease && existingRelease is null && project.ExpectedPackageIds.Count == 0)
                 {
                     var msg = "Package release rejected: project.ExpectedPackageIds is empty. Release jobs with NuGet enabled must declare an explicit expected package inventory.";
                     await Log($"=== FAILED: {msg} ===");
@@ -635,44 +696,49 @@ public class RemoteWorkerBackgroundService : BackgroundService
 
                 async Task<(bool Success, string? Error)> RunPushAsync(IReadOnlyList<string> packagePaths, CancellationToken token)
                 {
-                    await Log("=== Pushing NuGet packages ===");
+                    await Log("=== Verifying and publishing NuGet release ===");
                     await EmitPhaseAsync(job.Id, PhaseEventKind.Start, "worker.nuget.push",
-                        attrs: new() { ["source"] = nugetConfig.Source }, ct: token);
+                        attrs: new() { ["source"] = existingRelease?.Manifest.Source ?? nugetConfig.Source }, ct: token);
                     var pushSw = System.Diagnostics.Stopwatch.StartNew();
                     (bool Success, string? Error) result = (false, null);
 
                     try
                     {
-                        if (string.IsNullOrWhiteSpace(pushApiKey))
+                        var sha = job.TriggerCommitSha!;
+                        var release = await jobSource.GetNuGetReleaseAsync(job.Id, sha, token);
+                        if (release is null)
                         {
-                            var err = $"NuGet push secret '{nugetConfig.ApiKeySecretName}' not found in configured secrets.";
-                            await Log($"[nuget.push] FAILED: {err}");
-                            result = (false, err);
-                            return result;
-                        }
+                            var identities = new List<(string Path, PackageIdentity Identity)>();
+                            foreach (var path in packagePaths)
+                                identities.Add((path, await NuGetFeedVerifier.ReadIdentityAsync(path, token)));
+                            if (identities.Count == 0 || identities.Select(p => p.Identity.Version).Distinct(StringComparer.OrdinalIgnoreCase).Count() != 1)
+                                return (false, "Release packages must have one shared NuGet version.");
 
-                        foreach (var packagePath in packagePaths)
-                        {
-                            await Log($"[nuget.push] Pushing {Path.GetFileName(packagePath)} to {nugetConfig.Source}...");
-                            var pushResult = await NuGetPackagePusher.PushAsync(
-                                localPath,
-                                packagePath,
-                                pushApiKey,
-                                nugetConfig.Source,
-                                line => logBuffer.AppendAsync(line),
-                                token);
-
-                            if (!pushResult.Success)
+                            foreach (var (path, identity) in identities)
                             {
-                                await Log($"[nuget.push] FAILED pushing {Path.GetFileName(packagePath)}: {pushResult.Error}");
-                                result = (false, pushResult.Error);
-                                return result;
+                                await using var stream = File.OpenRead(path);
+                                await jobSource.UploadNuGetReleasePackageAsync(job.Id, sha, identity.Id, stream, token);
+                                await Log($"[nuget.release] Staged {identity.Id} {identity.Version} SHA256 {identity.Sha256}");
                             }
 
-                            await Log($"[nuget.push] Successfully pushed {Path.GetFileName(packagePath)}");
+                            var manifest = new NuGetReleaseManifest(project.Id, sha, identities[0].Identity.Version,
+                                nugetConfig.Source, nugetConfig.ApiKeySecretName, githubConfig.Enabled,
+                                identities.Select(p => new NuGetReleasePackage(p.Identity.Id,
+                                    p.Identity.Version, $"packages/{p.Identity.Id}.nupkg", p.Identity.Sha256,
+                                    p.Identity.ContentHash)).ToList(), DateTimeOffset.UtcNow);
+                            release = await jobSource.CreateNuGetReleaseAsync(job.Id, manifest, token);
+                            await Log($"[nuget.release] Durable immutable manifest prepared for {sha} ({manifest.Packages.Count} packages).");
                         }
 
-                        await Log("=== All NuGet packages pushed successfully ===");
+                        if (!string.Equals(release.Manifest.CommitSha, sha, StringComparison.OrdinalIgnoreCase)
+                            || release.Manifest.ProjectId != project.Id
+                            || release.Manifest.Packages.Count == 0)
+                            return (false, "Durable release manifest is invalid for this project and commit; manual intervention required.");
+
+                        var publish = await PublishManifestAsync(job, release, pushApiKey, localPath, Log, token);
+                        if (!publish.Success) return publish;
+
+                        await Log("=== All NuGet packages pushed successfully and verified ===");
                         result = (true, null);
                         return result;
                     }
@@ -686,12 +752,27 @@ public class RemoteWorkerBackgroundService : BackgroundService
                     }
                 }
 
+                async Task<(bool Success, string? Error)> RunResumedReleaseAsync(CancellationToken token)
+                {
+                    if (!nugetRecovered || existingRelease is null)
+                        return (false, "NuGet recovery was not verified.");
+                    if (!existingRelease.Manifest.RequiresGitHubPublish)
+                        return (true, null);
+                    if (!githubConfig.Enabled)
+                        return (false, "Stored release requires GitHub publication, but the validated source configuration does not enable it.");
+                    return await RunGitHubDeployAsync(token);
+                }
+
                 bool success;
                 string? error;
 
                 if (isPackageRelease)
                 {
-                    var releaseResult = await WorkerDeploymentPipeline.RunReleasePipelineAsync(
+                    if (existingRelease is not null)
+                        await Log($"[nuget.release] Resuming durable manifest for {existingRelease.Manifest.CommitSha}; build, tests and pack are already validated.");
+                    var releaseResult = existingRelease is not null
+                        ? await RunResumedReleaseAsync(jobCt)
+                        : await WorkerDeploymentPipeline.RunReleasePipelineAsync(
                         job,
                         project,
                         RunSolutionBuildAsync,
@@ -833,6 +914,127 @@ public class RemoteWorkerBackgroundService : BackgroundService
             await SetWorkerBusy(false, ct);
         }
     }
+
+    private async Task<(bool Success, string? Error)> PublishManifestAsync(
+        DeploymentJob job, NuGetReleaseSnapshot release, string? pushApiKey,
+        string workingDirectory, Func<string, Task> onLine, CancellationToken token)
+    {
+        var sha = job.TriggerCommitSha!;
+        var verifier = new NuGetFeedVerifier();
+        var staged = new List<(NuGetReleasePackage Package, string Path, PackageIdentity Identity)>();
+        var stageDir = Path.Combine(Path.GetTempPath(), "fleet-release-" + job.Id.ToString("N"));
+        Directory.CreateDirectory(stageDir);
+        try
+        {
+            foreach (var package in release.Manifest.Packages)
+            {
+                var path = Path.Combine(stageDir, package.Id + "." + package.Version + ".nupkg");
+                await using (var remote = await jobSource.DownloadNuGetReleasePackageAsync(job.Id, sha, package.Id, token))
+                await using (var output = File.Create(path))
+                    await remote.CopyToAsync(output, token);
+                var identity = await NuGetFeedVerifier.ReadIdentityAsync(path, token);
+                if (!string.Equals(identity.Id, package.Id, StringComparison.OrdinalIgnoreCase)
+                    || !string.Equals(identity.Version, package.Version, StringComparison.OrdinalIgnoreCase)
+                    || !string.Equals(identity.Sha256, package.Sha256, StringComparison.OrdinalIgnoreCase)
+                    || !string.Equals(identity.ContentHash, package.ContentHash, StringComparison.Ordinal))
+                    return (false, $"Durable artifact for {package.Id} does not match immutable manifest; intervention required.");
+                staged.Add((package, path, identity));
+            }
+
+            // Check every ID/version before the first new push, including packages
+            // marked complete by an earlier attempt.
+            var preflight = new Dictionary<string, FeedPackageStatus>(StringComparer.OrdinalIgnoreCase);
+            foreach (var item in staged)
+            {
+                var state = release.Progress.Single(p => string.Equals(p.Id, item.Package.Id, StringComparison.OrdinalIgnoreCase));
+                if (state.State == NuGetReleasePackageState.InterventionRequired)
+                    return (false, $"{item.Package.Id} requires manual intervention: {state.Detail}");
+                var found = await verifier.CheckAsync(release.Manifest.Source, item.Identity, token);
+                preflight[item.Package.Id] = found;
+                if (found == FeedPackageStatus.Conflict || found == FeedPackageStatus.Missing && state.State == NuGetReleasePackageState.Complete)
+                {
+                    var conflict = $"Remote {item.Package.Id} {item.Package.Version} conflicts with the immutable release manifest.";
+                    await jobSource.SetNuGetReleasePackageStateAsync(job.Id, sha, item.Package.Id,
+                        NuGetReleasePackageState.InterventionRequired, conflict, token);
+                    return (false, conflict);
+                }
+            }
+
+            foreach (var item in staged)
+            {
+                if (preflight[item.Package.Id] == FeedPackageStatus.Equivalent)
+                {
+                    release = await jobSource.SetNuGetReleasePackageStateAsync(job.Id, sha, item.Package.Id,
+                        NuGetReleasePackageState.Complete, "Exact downloadable package verified", token);
+                    await onLine($"[nuget.release] {item.Package.Id} {item.Package.Version}: equivalent remote package verified.");
+                    continue;
+                }
+
+                if (string.IsNullOrWhiteSpace(pushApiKey))
+                    return (false, $"NuGet push secret '{release.Manifest.ApiKeySecretName}' not found in configured secrets.");
+
+                release = await jobSource.SetNuGetReleasePackageStateAsync(job.Id, sha, item.Package.Id,
+                    NuGetReleasePackageState.Publishing, "Push started", token);
+                await onLine($"[nuget.push] Pushing {Path.GetFileName(item.Path)} to {release.Manifest.Source}...");
+                (bool Success, string? Error) push;
+                try
+                {
+                    push = await PushPackageAsync(workingDirectory, item.Path, pushApiKey,
+                        release.Manifest.Source, onLine, token);
+                }
+                catch (Exception ex) when (ex is not OperationCanceledException || !token.IsCancellationRequested)
+                {
+                    push = (false, $"Ambiguous push response: {ex.Message}");
+                }
+
+                FeedPackageStatus found;
+                try
+                {
+                    found = await verifier.WaitForExactAsync(release.Manifest.Source, item.Identity,
+                        NuGetAvailabilityTimeout, NuGetAvailabilityPollInterval, token);
+                }
+                catch (Exception ex) when (ex is not OperationCanceledException || !token.IsCancellationRequested)
+                {
+                    await jobSource.SetNuGetReleasePackageStateAsync(job.Id, sha, item.Package.Id,
+                        NuGetReleasePackageState.Incomplete, $"Remote lookup unavailable after push: {ex.Message}", token);
+                    return (false, $"Remote lookup unavailable after pushing {item.Package.Id}; retry the release from durable artifacts.");
+                }
+
+                if (found == FeedPackageStatus.Conflict)
+                {
+                    var conflict = $"Remote {item.Package.Id} {item.Package.Version} differs from the release artifact after push.";
+                    await jobSource.SetNuGetReleasePackageStateAsync(job.Id, sha, item.Package.Id,
+                        NuGetReleasePackageState.InterventionRequired, conflict, token);
+                    return (false, conflict);
+                }
+                if (found == FeedPackageStatus.Missing)
+                {
+                    await jobSource.SetNuGetReleasePackageStateAsync(job.Id, sha, item.Package.Id,
+                        NuGetReleasePackageState.Incomplete, push.Error ?? "Package not downloadable after push", token);
+                    return (false, $"{item.Package.Id} is not yet downloadable; release incomplete. Retry using the durable manifest.");
+                }
+
+                release = await jobSource.SetNuGetReleasePackageStateAsync(job.Id, sha, item.Package.Id,
+                    NuGetReleasePackageState.Complete, "Exact downloadable package verified", token);
+                await onLine($"[nuget.release] {item.Package.Id} {item.Package.Version}: exact package downloadable and verified.");
+            }
+
+            if (release.Progress.Any(p => p.State != NuGetReleasePackageState.Complete))
+                return (false, "NuGet release is incomplete; final announcement withheld.");
+        }
+        finally
+        {
+            try { Directory.Delete(stageDir, recursive: true); } catch { }
+        }
+        return (true, null);
+    }
+
+    internal virtual Task<(bool Success, string? Error)> PushPackageAsync(string workingDirectory,
+        string packagePath, string apiKey, string source, Func<string, Task> onLine, CancellationToken ct) =>
+        NuGetPackagePusher.PushAsync(workingDirectory, packagePath, apiKey, source, onLine, ct);
+
+    internal virtual TimeSpan NuGetAvailabilityTimeout => TimeSpan.FromMinutes(2);
+    internal virtual TimeSpan NuGetAvailabilityPollInterval => TimeSpan.FromSeconds(3);
 
     private async Task ReportJobFailedBestEffort(Guid jobId, string error, CancellationToken ct)
     {
