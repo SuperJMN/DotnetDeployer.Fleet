@@ -65,6 +65,7 @@ public sealed class JobPhaseRow : ReactiveObject
             {
                 PhaseStatus.Ok => "✅",
                 PhaseStatus.Fail => "❌",
+                PhaseStatus.Waiting => "⏳",
                 _ => "•"
             };
 

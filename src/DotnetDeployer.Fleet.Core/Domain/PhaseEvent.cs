@@ -11,7 +11,8 @@ public enum PhaseStatus
 {
     Unknown,
     Ok,
-    Fail
+    Fail,
+    Waiting
 }
 
 /// <summary>

@@ -92,6 +92,37 @@ public sealed class ImmutableRevisionTests : IDisposable
     }
 
     [Fact]
+    public async Task EnqueueDeploy_reuses_a_release_waiting_for_NuGet_indexing()
+    {
+        var storage = new EfFleetStorage(factory, new CapabilityWorkerSelector());
+        var project = new Project
+        {
+            Id = Guid.NewGuid(), Name = "proj",
+            GitUrl = "https://example.com/repo.git", Branch = "main"
+        };
+        await storage.AddProjectAsync(project);
+        var waiting = new DeploymentJob
+        {
+            ProjectId = project.Id,
+            TriggerCommitSha = new string('a', 40),
+            Status = JobStatus.AwaitingNuGetIndex
+        };
+        await storage.AddJobAsync(waiting);
+
+        var result = await ProjectEndpoints.EnqueueDeploy(
+            project.Id,
+            new ProjectEndpoints.EnqueueDeployRequest(waiting.TriggerCommitSha),
+            storage,
+            Substitute.For<IGitCommitResolver>(),
+            new JobAssignmentSignal(),
+            new DefaultHttpContext());
+
+        result.Should().BeOfType<Ok<DeploymentJob>>();
+        ((Ok<DeploymentJob>)result).Value!.Id.Should().Be(waiting.Id);
+        (await storage.GetJobsByProjectAsync(project.Id)).Should().ContainSingle();
+    }
+
+    [Fact]
     public async Task EnqueueDeploy_with_invalid_commit_sha_returns_bad_request()
     {
         var storage = new EfFleetStorage(factory, new CapabilityWorkerSelector());

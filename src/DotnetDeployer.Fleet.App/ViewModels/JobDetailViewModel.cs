@@ -133,7 +133,7 @@ public partial class JobDetailViewModel : ReactiveObject, IHaveHeader, IDisposab
             .Subscribe(OnSearchTextChanged)
             .DisposeWith(disposables);
 
-        if (job.Status is JobStatus.Running or JobStatus.Queued or JobStatus.Assigned)
+        if (job.Status is JobStatus.Running or JobStatus.Queued or JobStatus.Assigned or JobStatus.AwaitingNuGetIndex)
         {
             StartStreaming();
         }
@@ -453,6 +453,7 @@ public partial class JobDetailViewModel : ReactiveObject, IHaveHeader, IDisposab
         JobStatus.Succeeded => "✅ Succeeded",
         JobStatus.Failed => "❌ Failed",
         JobStatus.Cancelled => "🚫 Cancelled",
+        JobStatus.AwaitingNuGetIndex => "⏳ Waiting for NuGet indexing",
         _ => status.ToString()
     };
 
@@ -508,7 +509,7 @@ public partial class JobDetailViewModel : ReactiveObject, IHaveHeader, IDisposab
     }
 
     private static bool IsJobCancelable(DeploymentJob job) =>
-        job.Status is JobStatus.Running or JobStatus.Queued or JobStatus.Assigned
+        job.Status is JobStatus.Running or JobStatus.Queued or JobStatus.Assigned or JobStatus.AwaitingNuGetIndex
         && job.CancellationRequestedAt is null;
 
     private void FeedBatchToTerminal(List<LogLine> batch)

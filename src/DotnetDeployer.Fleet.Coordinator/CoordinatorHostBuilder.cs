@@ -221,6 +221,7 @@ public static class CoordinatorHostBuilder
         await EnsureJobColumnAsync(db, "AssignedAt", "INTEGER NULL");
         await EnsureJobColumnAsync(db, "EstimatedDurationMs", "INTEGER NULL");
         await EnsureJobColumnAsync(db, "TotalDurationMs", "INTEGER NULL");
+        await EnsureJobColumnAsync(db, "InitialEnqueuedAt", "INTEGER NULL");
         await EnsureJobColumnAsync(db, "Kind", "INTEGER NOT NULL DEFAULT 0");
         await EnsureJobColumnAsync(db, "PackageRequestJson", "TEXT NULL");
 
