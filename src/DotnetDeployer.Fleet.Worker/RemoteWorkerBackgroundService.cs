@@ -292,6 +292,18 @@ public class RemoteWorkerBackgroundService : BackgroundService
                 var githubPagesConfig = configSummary.GitHubPages;
                 var publishSecretNames = configSummary.PublishSecretNames;
                 var signingSecretNames = configSummary.SigningSecretNames;
+                string? isolatedGitHubConfig = null;
+                if (job.Kind == JobKind.Deploy && nugetConfig.Enabled && githubConfig.Enabled)
+                {
+                    var originalYamlPath = Path.Combine(localPath, "deployer.yaml");
+                    if (!File.Exists(originalYamlPath))
+                        originalYamlPath = Path.Combine(localPath, "deployer.yml");
+                    if (!File.Exists(originalYamlPath))
+                        throw new FileNotFoundException("Cannot isolate GitHub publication: deployer.yaml is missing.");
+
+                    isolatedGitHubConfig = DeployerYamlReader.DisableNuGetPublishing(
+                        await File.ReadAllTextAsync(originalYamlPath, jobCt));
+                }
 
                 // Solution build and test environments must NOT receive publication secrets OR signing secrets
                 var buildScrubKeys = publishSecretNames
@@ -332,15 +344,6 @@ public class RemoteWorkerBackgroundService : BackgroundService
                 else if (allSecrets.TryGetValue("GH_TOKEN", out var tokenFromGh))
                 {
                     githubToken = tokenFromGh;
-                }
-
-                if (job.Kind == JobKind.Deploy && nugetConfig.Enabled && githubConfig.Enabled)
-                {
-                    var msg = "Mixed release deployment rejected: both NuGet and GitHub publishing destinations are enabled in deployer.yaml. Multi-destination deployment cannot be executed atomically across independent external APIs (NuGet and GitHub), risking irreversible partial publication if a destination fails. Configure jobs with a single publishing destination (either NuGet or GitHub), or separate package publishing and GitHub releases into distinct deployment jobs.";
-                    await Log($"=== FAILED: {msg} ===");
-                    await logBuffer.FlushAsync();
-                    await jobSource.ReportJobCompletedAsync(job.Id, false, msg, ct);
-                    return;
                 }
 
                 var isPackageRelease = job.Kind == JobKind.Deploy && (nugetConfig.Enabled || project.ExpectedPackageIds.Count > 0);
@@ -468,32 +471,11 @@ public class RemoteWorkerBackgroundService : BackgroundService
                     try
                     {
                         var deployerArgs = new List<string>(deployerArguments);
-                        if (nugetConfig.Enabled)
+                        if (isolatedGitHubConfig is not null)
                         {
                             tempConfigFile = Path.Combine(localPath, $".deployer.no-nuget.{Guid.NewGuid():N}.yaml");
-                            var originalYamlPath = Path.Combine(localPath, "deployer.yaml");
-                            if (!File.Exists(originalYamlPath))
-                                originalYamlPath = Path.Combine(localPath, "deployer.yml");
-
-                            if (File.Exists(originalYamlPath))
-                            {
-                                var content = await File.ReadAllTextAsync(originalYamlPath, token);
-                                var modified = System.Text.RegularExpressions.Regex.Replace(
-                                    content,
-                                    @"(\bnuget:\s*\n(?:\s+.*\n)*?\s+enabled:\s*)true",
-                                    "${1}false",
-                                    System.Text.RegularExpressions.RegexOptions.IgnoreCase);
-                                if (modified == content)
-                                {
-                                    modified = System.Text.RegularExpressions.Regex.Replace(
-                                        content,
-                                        @"(\bnuget:\s*\n)",
-                                        "${1}  enabled: false\n",
-                                        System.Text.RegularExpressions.RegexOptions.IgnoreCase);
-                                }
-                                await File.WriteAllTextAsync(tempConfigFile, modified, token);
-                                deployerArgs.AddRange(["--config", Path.GetFileName(tempConfigFile)]);
-                            }
+                            await File.WriteAllTextAsync(tempConfigFile, isolatedGitHubConfig, token);
+                            deployerArgs.AddRange(["--config", Path.GetFileName(tempConfigFile)]);
                         }
 
                         var githubPublishEnvVars = new Dictionary<string, string>(packEnvVars, StringComparer.OrdinalIgnoreCase);
