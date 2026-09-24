@@ -46,11 +46,8 @@ internal static class WorkerDeploymentPipeline
     /// 2. Solution test gate (if configured)
     /// 3. Package generation (pack)
     /// 4. Package inventory verification
-    /// 5. Single publication target execution (e.g. NuGet package push OR GitHub release)
-    ///
-    /// Note: Multi-target publication (e.g. NuGet push AND GitHub release in the same pipeline)
-    /// is rejected fail-closed because independent external APIs cannot be committed atomically,
-    /// risking irreversible partial publication if a subsequent destination fails.
+    /// 5. NuGet push, then any additional publication target
+    /// All local gates complete before either external publication begins.
     /// </summary>
     internal static async Task<(bool Success, string? Error)> RunReleasePipelineAsync(
         DeploymentJob job,
@@ -63,11 +60,6 @@ internal static class WorkerDeploymentPipeline
         Func<CancellationToken, Task<(bool Success, string? Error)>>? runAdditionalPublish = null,
         CancellationToken ct = default)
     {
-        if (runPush is not null && runAdditionalPublish is not null)
-        {
-            return (false, "Mixed release deployment rejected: multiple publishing destinations (NuGet push and additional publish) cannot be executed atomically across independent external APIs, risking irreversible partial publication. Configure only a single destination per release pipeline.");
-        }
-
         ct.ThrowIfCancellationRequested();
         var buildResult = await runSolutionBuild(ct);
         if (!buildResult.Success)
@@ -102,9 +94,23 @@ internal static class WorkerDeploymentPipeline
         ct.ThrowIfCancellationRequested();
         if (runAdditionalPublish is not null)
         {
-            var additionalResult = await runAdditionalPublish(ct);
+            (bool Success, string? Error) additionalResult;
+            try
+            {
+                additionalResult = await runAdditionalPublish(ct);
+            }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested)
+            {
+                throw;
+            }
+            catch (Exception ex) when (runPush is not null)
+            {
+                return (false, $"Partial publication: NuGet packages were pushed, but the additional publication failed: {ex.Message}");
+            }
             if (!additionalResult.Success)
-                return additionalResult;
+                return runPush is null
+                    ? additionalResult
+                    : (false, $"Partial publication: NuGet packages were pushed, but the additional publication failed: {additionalResult.Error}");
         }
 
         return (true, null);

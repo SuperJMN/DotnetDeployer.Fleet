@@ -261,25 +261,25 @@ public sealed class SolutionTestGateTests
     }
 
     [Fact]
-    public async Task ReleasePipeline_rejects_mixed_deployment_before_any_build_test_pack_or_publish()
+    public async Task ReleasePipeline_does_not_publish_to_either_destination_when_tests_fail()
     {
         var job = new DeploymentJob { Kind = JobKind.Deploy };
         var project = new Project { RunTestsBeforeDeploy = true, ExpectedPackageIds = ["Pkg.A"] };
-        var anyStepInvoked = false;
+        var stages = new List<string>();
 
         var result = await WorkerDeploymentPipeline.RunReleasePipelineAsync(
             job,
             project,
-            runSolutionBuild: _ => { anyStepInvoked = true; return Task.FromResult<(bool, string?)>((true, null)); },
-            runSolutionTests: _ => { anyStepInvoked = true; return Task.FromResult<(bool, string?)>((true, null)); },
-            runPack: _ => { anyStepInvoked = true; return Task.FromResult<(bool, string?, IReadOnlyList<string>)>((true, null, ["pkg.nupkg"])); },
-            verifyInventory: (_, _) => { anyStepInvoked = true; return Task.FromResult<(bool, string?)>((true, null)); },
-            runPush: (_, _) => { anyStepInvoked = true; return Task.FromResult<(bool, string?)>((true, null)); },
-            runAdditionalPublish: _ => { anyStepInvoked = true; return Task.FromResult<(bool, string?)>((true, null)); });
+            runSolutionBuild: _ => { stages.Add("build"); return Task.FromResult<(bool, string?)>((true, null)); },
+            runSolutionTests: _ => { stages.Add("tests"); return Task.FromResult<(bool, string?)>((false, "tests failed")); },
+            runPack: _ => { stages.Add("pack"); return Task.FromResult<(bool, string?, IReadOnlyList<string>)>((true, null, ["pkg.nupkg"])); },
+            verifyInventory: (_, _) => { stages.Add("verify"); return Task.FromResult<(bool, string?)>((true, null)); },
+            runPush: (_, _) => { stages.Add("nuget.push"); return Task.FromResult<(bool, string?)>((true, null)); },
+            runAdditionalPublish: _ => { stages.Add("github.deploy"); return Task.FromResult<(bool, string?)>((true, null)); });
 
         result.Success.Should().BeFalse();
-        result.Error.Should().Contain("Mixed release deployment rejected");
-        anyStepInvoked.Should().BeFalse("No build, test, pack, or publish steps should execute when mixed release targets are configured");
+        result.Error.Should().Be("tests failed");
+        stages.Should().Equal("build", "tests");
     }
 
     [Fact]

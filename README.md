@@ -100,7 +100,9 @@ You now have managed remote execution for DotnetDeployer. Add projects from the 
 
 Each repo you deploy must contain a **`deployer.yaml`** at the root. See the [DotnetDeployer docs](https://github.com/SuperJMN/DotnetDeployer) for the format.
 
-Deployment projects run solution tests by default. The repository root must contain exactly one `.slnx` or `.sln` file; Fleet runs a best-effort `dotnet workload restore <solution>` followed by `dotnet test <solution> -c Release --nologo`. A failing test command stops the deployment before DotnetDeployer starts. Disable **Run solution tests before deployment** when creating or editing a project to opt out. Package-only builds do not run this test gate.
+Deployment projects build the root solution and run its tests by default. The repository root must contain exactly one `.slnx` or `.sln` file. Disable **Run solution tests before deployment** when creating or editing a project to opt out of the test gate.
+
+For NuGet releases, set **Expected NuGet package IDs** to the exact package IDs the repo produces. Fleet first builds, tests, generates all configured packages in a dry run, and verifies that inventory. It then pushes NuGet packages and creates the GitHub release when both destinations are enabled. These external publications cannot be atomic: if GitHub fails after the NuGet push, the job fails and reports the partial publication for repair.
 
 > The worker runs `dnx dotnetdeployer.tool -y` — .NET 10's `dnx` downloads and caches the tool automatically. No global install or tool manifest needed.
 

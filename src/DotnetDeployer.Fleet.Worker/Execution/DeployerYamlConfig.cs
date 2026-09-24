@@ -96,6 +96,34 @@ public static class DeployerYamlReader
         }
     }
 
+    public static string DisableNuGetPublishing(string yamlContent)
+    {
+        var stream = new YamlStream();
+        stream.Load(new StringReader(yamlContent));
+        if (stream.Documents.Count != 1 || stream.Documents[0].RootNode is not YamlMappingNode root ||
+            !TryGetMappingValue(root, "nuget", out var section) || section is not YamlMappingNode nuget)
+        {
+            throw new InvalidDataException("Cannot isolate GitHub publication: deployer.yaml has no NuGet section.");
+        }
+
+        var enabledKey = nuget.Children.Keys
+            .OfType<YamlScalarNode>()
+            .FirstOrDefault(key => string.Equals(key.Value, "enabled", StringComparison.OrdinalIgnoreCase));
+        if (enabledKey is null)
+            nuget.Add("enabled", "false");
+        else
+            nuget.Children[enabledKey] = new YamlScalarNode("false");
+
+        using var writer = new StringWriter();
+        stream.Save(writer, assignAnchors: false);
+        var isolated = writer.ToString();
+        var effective = ParseConfig(isolated);
+        if (effective.NuGet.Enabled || !effective.GitHub.Enabled)
+            throw new InvalidDataException("Cannot isolate GitHub publication without disabling NuGet.");
+
+        return isolated;
+    }
+
     private static DeployerConfigSummary CreateDefaultConfig()
     {
         return new DeployerConfigSummary(

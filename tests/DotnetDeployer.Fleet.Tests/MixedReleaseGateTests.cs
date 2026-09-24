@@ -85,6 +85,36 @@ public sealed class MixedReleaseGateTests : IDisposable
         config.GitHub.Enabled.Should().BeTrue("omitted enabled in github section defaults to true");
     }
 
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public void GitHub_publication_config_disables_only_nuget(bool explicitNuGetEnabled)
+    {
+        var enabledLine = explicitNuGetEnabled ? "  enabled: true\n" : "";
+        var yaml = $"""
+            version: 1
+            nuget:
+            {enabledLine}  source: https://api.nuget.org/v3/index.json
+            github:
+              enabled: true
+              owner: SuperJMN
+              repo: RetroSharp
+              packages:
+                - project: src/RetroSharp.Standalone/RetroSharp.Standalone.csproj
+                  formats:
+                    - type: deb
+                      arch: [x64]
+            """;
+
+        var isolated = DeployerYamlReader.DisableNuGetPublishing(yaml);
+        var config = DeployerYamlReader.ParseConfig(isolated);
+
+        config.NuGet.Enabled.Should().BeFalse();
+        config.GitHub.Enabled.Should().BeTrue();
+        isolated.Should().Contain("RetroSharp.Standalone.csproj");
+        DeployerYamlReader.ParseConfig(yaml).NuGet.Enabled.Should().BeTrue();
+    }
+
     [Fact]
     public void DeployerYamlReader_detects_single_destination_when_section_is_omitted()
     {
@@ -112,26 +142,82 @@ public sealed class MixedReleaseGateTests : IDisposable
     }
 
     [Fact]
-    public async Task WorkerDeploymentPipeline_rejects_mixed_release_before_any_publish_or_build()
+    public async Task WorkerDeploymentPipeline_stages_and_verifies_before_publishing_to_both_destinations()
     {
         var job = new DeploymentJob { Kind = JobKind.Deploy };
         var project = new Project { RunTestsBeforeDeploy = true, ExpectedPackageIds = ["DemoLib"] };
-        var anyStageInvoked = false;
+        var stages = new List<string>();
 
         var result = await WorkerDeploymentPipeline.RunReleasePipelineAsync(
             job,
             project,
-            runSolutionBuild: _ => { anyStageInvoked = true; return Task.FromResult<(bool, string?)>((true, null)); },
-            runSolutionTests: _ => { anyStageInvoked = true; return Task.FromResult<(bool, string?)>((true, null)); },
-            runPack: _ => { anyStageInvoked = true; return Task.FromResult<(bool, string?, IReadOnlyList<string>)>((true, null, ["pkg.nupkg"])); },
-            verifyInventory: (_, _) => { anyStageInvoked = true; return Task.FromResult<(bool, string?)>((true, null)); },
-            runPush: (_, _) => { anyStageInvoked = true; return Task.FromResult<(bool, string?)>((true, null)); },
-            runAdditionalPublish: _ => { anyStageInvoked = true; return Task.FromResult<(bool, string?)>((true, null)); });
+            runSolutionBuild: _ => { stages.Add("build"); return Task.FromResult<(bool, string?)>((true, null)); },
+            runSolutionTests: _ => { stages.Add("tests"); return Task.FromResult<(bool, string?)>((true, null)); },
+            runPack: _ => { stages.Add("pack"); return Task.FromResult<(bool, string?, IReadOnlyList<string>)>((true, null, ["pkg.nupkg"])); },
+            verifyInventory: (_, _) => { stages.Add("verify"); return Task.FromResult<(bool, string?)>((true, null)); },
+            runPush: (_, _) => { stages.Add("nuget.push"); return Task.FromResult<(bool, string?)>((true, null)); },
+            runAdditionalPublish: _ => { stages.Add("github.deploy"); return Task.FromResult<(bool, string?)>((true, null)); });
+
+        result.Success.Should().BeTrue();
+        stages.Should().Equal("build", "tests", "pack", "verify", "nuget.push", "github.deploy");
+    }
+
+    [Fact]
+    public async Task WorkerDeploymentPipeline_reports_partial_publication_when_github_fails_after_nuget()
+    {
+        var result = await WorkerDeploymentPipeline.RunReleasePipelineAsync(
+            new DeploymentJob { Kind = JobKind.Deploy },
+            new Project { RunTestsBeforeDeploy = true, ExpectedPackageIds = ["DemoLib"] },
+            runSolutionBuild: _ => Task.FromResult<(bool, string?)>((true, null)),
+            runSolutionTests: _ => Task.FromResult<(bool, string?)>((true, null)),
+            runPack: _ => Task.FromResult<(bool, string?, IReadOnlyList<string>)>((true, null, ["pkg.nupkg"])),
+            verifyInventory: (_, _) => Task.FromResult<(bool, string?)>((true, null)),
+            runPush: (_, _) => Task.FromResult<(bool, string?)>((true, null)),
+            runAdditionalPublish: _ => Task.FromResult<(bool, string?)>((false, "GitHub unavailable")));
 
         result.Success.Should().BeFalse();
-        result.Error.Should().Contain("Mixed release deployment rejected");
-        result.Error.Should().Contain("cannot be executed atomically");
-        anyStageInvoked.Should().BeFalse("No pipeline stage must execute when both push and additional publish are provided");
+        result.Error.Should().Contain("Partial publication");
+        result.Error.Should().Contain("NuGet packages were pushed");
+        result.Error.Should().Contain("GitHub unavailable");
+    }
+
+    [Fact]
+    public async Task WorkerDeploymentPipeline_reports_partial_publication_when_github_throws_after_nuget()
+    {
+        var result = await WorkerDeploymentPipeline.RunReleasePipelineAsync(
+            new DeploymentJob { Kind = JobKind.Deploy },
+            new Project { RunTestsBeforeDeploy = true, ExpectedPackageIds = ["DemoLib"] },
+            runSolutionBuild: _ => Task.FromResult<(bool, string?)>((true, null)),
+            runSolutionTests: _ => Task.FromResult<(bool, string?)>((true, null)),
+            runPack: _ => Task.FromResult<(bool, string?, IReadOnlyList<string>)>((true, null, ["pkg.nupkg"])),
+            verifyInventory: (_, _) => Task.FromResult<(bool, string?)>((true, null)),
+            runPush: (_, _) => Task.FromResult<(bool, string?)>((true, null)),
+            runAdditionalPublish: _ => throw new IOException("Cannot write isolated config"));
+
+        result.Success.Should().BeFalse();
+        result.Error.Should().Contain("Partial publication");
+        result.Error.Should().Contain("Cannot write isolated config");
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task WorkerDeploymentPipeline_does_not_publish_when_pack_or_inventory_fails(bool packFails)
+    {
+        var published = false;
+        var result = await WorkerDeploymentPipeline.RunReleasePipelineAsync(
+            new DeploymentJob { Kind = JobKind.Deploy },
+            new Project { RunTestsBeforeDeploy = true, ExpectedPackageIds = ["DemoLib"] },
+            runSolutionBuild: _ => Task.FromResult<(bool, string?)>((true, null)),
+            runSolutionTests: _ => Task.FromResult<(bool, string?)>((true, null)),
+            runPack: _ => Task.FromResult<(bool, string?, IReadOnlyList<string>)>(
+                packFails ? (false, "pack failed", []) : (true, null, ["pkg.nupkg"])),
+            verifyInventory: (_, _) => Task.FromResult<(bool, string?)>((false, "inventory failed")),
+            runPush: (_, _) => { published = true; return Task.FromResult<(bool, string?)>((true, null)); },
+            runAdditionalPublish: _ => { published = true; return Task.FromResult<(bool, string?)>((true, null)); });
+
+        result.Success.Should().BeFalse();
+        published.Should().BeFalse();
     }
 
     [Fact]
@@ -177,7 +263,7 @@ public sealed class MixedReleaseGateTests : IDisposable
     }
 
     [Fact]
-    public async Task Worker_rejects_mixed_release_job_fail_closed_before_any_publish_or_build()
+    public async Task Worker_requires_inventory_before_mixed_release_publication()
     {
         var dbPath = Path.Combine(CreateTempDir("db"), "fleet.db");
         var options = new DbContextOptionsBuilder<FleetDbContext>()
@@ -241,7 +327,7 @@ public sealed class MixedReleaseGateTests : IDisposable
             Name = "MixedProject",
             GitUrl = repoDir,
             Branch = "main",
-            ExpectedPackageIds = ["SomePkg"]
+            ExpectedPackageIds = []
         };
         await storage.AddProjectAsync(project);
 
@@ -264,8 +350,7 @@ public sealed class MixedReleaseGateTests : IDisposable
         var finishedJob = await storage.GetJobAsync(job.Id);
         finishedJob.Should().NotBeNull();
         finishedJob!.Status.Should().Be(JobStatus.Failed);
-        finishedJob.ErrorMessage.Should().Contain("Mixed release deployment rejected");
-        finishedJob.ErrorMessage.Should().Contain("both NuGet and GitHub publishing destinations are enabled");
+        finishedJob.ErrorMessage.Should().Contain("project.ExpectedPackageIds is empty");
 
         // Assert: No publish phases were recorded
         var phases = await storage.GetJobPhasesAsync(job.Id);
