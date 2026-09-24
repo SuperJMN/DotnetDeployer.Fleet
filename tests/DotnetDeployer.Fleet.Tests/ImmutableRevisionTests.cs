@@ -214,7 +214,7 @@ public sealed class ImmutableRevisionTests : IDisposable
     }
 
     [Fact]
-    public async Task GitHelper_CloneOrFetchAsync_checks_out_exact_targetCommitSha_even_when_branch_advanced()
+    public async Task GitHelper_CloneOrFetchAsync_pins_targetCommitSha_on_named_branch_for_versioning()
     {
         var originDir = CreateTempDir("git-origin");
         var cloneDir = CreateTempDir("git-clone");
@@ -245,6 +245,8 @@ public sealed class ImmutableRevisionTests : IDisposable
 
         var headInClone = RunGit(cloneDir, "rev-parse HEAD").Trim();
         headInClone.Should().Be(commit1, "worker must checkout the immutable TriggerCommitSha, not the latest branch HEAD");
+        RunGit(cloneDir, "symbolic-ref --short HEAD").Trim().Should().Be("master",
+            "versioning needs the branch context while the checkout remains pinned to TriggerCommitSha");
 
         var fileContent = await File.ReadAllTextAsync(Path.Combine(cloneDir, "file.txt"));
         fileContent.Should().Be("v1");

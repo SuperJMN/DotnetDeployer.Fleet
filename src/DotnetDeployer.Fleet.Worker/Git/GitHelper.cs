@@ -73,7 +73,9 @@ public static class GitHelper
             {
                 // Fall back to existing fetched objects if direct fetch fails
             }
-            await RunGitAsync(["checkout", "--detach", targetCommitSha], localPath, log, ct);
+            // Keep a named local branch at the pinned revision. GitVersion needs
+            // branch context, while the SHA check below preserves immutability.
+            await RunGitAsync(["checkout", "-B", branch, targetCommitSha], localPath, log, ct);
         }
         else
         {
