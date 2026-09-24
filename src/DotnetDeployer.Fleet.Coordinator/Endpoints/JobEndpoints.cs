@@ -8,6 +8,9 @@ namespace DotnetDeployer.Fleet.Coordinator.Endpoints;
 
 public static class JobEndpoints
 {
+    private const long MaxArtifactUploadBytes = 512L * 1024 * 1024;
+    private const long MaxNuGetPackageUploadBytes = 64L * 1024 * 1024;
+
     public static void MapJobEndpoints(this WebApplication app)
     {
         var group = app.MapGroup("/api/jobs").RequireAuthorization();
@@ -28,9 +31,13 @@ public static class JobEndpoints
         workerGroup.MapPost("/jobs/{id:guid}/start", ReportStarted).RequireAuthorization("Worker");
         workerGroup.MapPost("/jobs/{id:guid}/logs", AppendLogs).RequireAuthorization("Worker");
         workerGroup.MapPost("/jobs/{id:guid}/phase", AppendPhase).RequireAuthorization("Worker");
-        workerGroup.MapPost("/jobs/{id:guid}/artifacts", UploadArtifact).RequireAuthorization("Worker");
+        workerGroup.MapPost("/jobs/{id:guid}/artifacts", UploadArtifact)
+            .WithMetadata(new RequestSizeLimitAttribute(MaxArtifactUploadBytes))
+            .RequireAuthorization("Worker");
         workerGroup.MapGet("/jobs/{id:guid}/nuget-release/{commitSha}", GetNuGetRelease).RequireAuthorization("Worker");
-        workerGroup.MapPost("/jobs/{id:guid}/nuget-release/{commitSha}/packages/{packageId}", UploadNuGetReleasePackage).RequireAuthorization("Worker");
+        workerGroup.MapPost("/jobs/{id:guid}/nuget-release/{commitSha}/packages/{packageId}", UploadNuGetReleasePackage)
+            .WithMetadata(new RequestSizeLimitAttribute(MaxNuGetPackageUploadBytes))
+            .RequireAuthorization("Worker");
         workerGroup.MapGet("/jobs/{id:guid}/nuget-release/{commitSha}/packages/{packageId}", DownloadNuGetReleasePackage).RequireAuthorization("Worker");
         workerGroup.MapPost("/jobs/{id:guid}/nuget-release/{commitSha}", CreateNuGetRelease).RequireAuthorization("Worker");
         workerGroup.MapPut("/jobs/{id:guid}/nuget-release/{commitSha}/packages/{packageId}/state", SetNuGetReleasePackageState).RequireAuthorization("Worker");
