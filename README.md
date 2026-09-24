@@ -102,7 +102,7 @@ Each repo you deploy must contain a **`deployer.yaml`** at the root. See the [Do
 
 Deployment projects build the root solution and run its tests by default. The repository root must contain exactly one `.slnx` or `.sln` file. Disable **Run solution tests before deployment** when creating or editing a project to opt out of the test gate.
 
-For NuGet releases, set **Expected NuGet package IDs** to the exact package IDs the repo produces. Fleet first builds, tests, generates all configured packages in a dry run, and verifies that inventory. It then pushes NuGet packages and creates the GitHub release when both destinations are enabled. These external publications cannot be atomic: if GitHub fails after the NuGet push, the job fails and reports the partial publication for repair.
+For NuGet releases, set **Expected NuGet package IDs** to the exact package IDs the repo produces. Fleet first builds, tests, generates all configured packages in a dry run, and verifies that inventory. It then pushes NuGet packages and creates the GitHub release when both destinations are enabled. If NuGet accepts a package before it is downloadable, Fleet releases the worker and retries the same durable manifest after indexing. These external publications cannot be atomic: if GitHub fails after the NuGet push, the job fails and reports the partial publication for repair.
 
 > The worker runs `dnx dotnetdeployer.tool -y` — .NET 10's `dnx` downloads and caches the tool automatically. No global install or tool manifest needed.
 

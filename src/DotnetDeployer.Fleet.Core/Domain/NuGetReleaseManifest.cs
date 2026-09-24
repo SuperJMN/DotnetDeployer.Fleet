@@ -6,7 +6,8 @@ public enum NuGetReleasePackageState
     Publishing,
     Incomplete,
     Complete,
-    InterventionRequired
+    InterventionRequired,
+    AwaitingIndex
 }
 
 /// <summary>Immutable release intent. Package bytes live in coordinator artifact storage.</summary>

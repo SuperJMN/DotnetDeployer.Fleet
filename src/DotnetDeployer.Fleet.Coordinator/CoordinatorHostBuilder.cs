@@ -111,6 +111,7 @@ public static class CoordinatorHostBuilder
         builder.Services.AddHostedService<PollingBackgroundService>();
         builder.Services.AddHostedService<JobAssignmentService>();
         builder.Services.AddHostedService<StaleJobReaperService>();
+        builder.Services.AddHostedService<NuGetReleaseRetryService>();
 
         // ── mDNS LAN auto-discovery ──────────────────────────────────────────
         if (!options.NoMdns)

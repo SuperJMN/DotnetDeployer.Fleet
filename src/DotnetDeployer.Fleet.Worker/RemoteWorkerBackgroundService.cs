@@ -1010,8 +1010,8 @@ public class RemoteWorkerBackgroundService : BackgroundService
                 if (found == FeedPackageStatus.Missing)
                 {
                     await jobSource.SetNuGetReleasePackageStateAsync(job.Id, sha, item.Package.Id,
-                        NuGetReleasePackageState.Incomplete, push.Error ?? "Package not downloadable after push", token);
-                    return (false, $"{item.Package.Id} is not yet downloadable; release incomplete. Retry using the durable manifest.");
+                        NuGetReleasePackageState.AwaitingIndex, push.Error ?? "Package not downloadable after push", token);
+                    return (false, $"{item.Package.Id} is not yet downloadable; release incomplete. Fleet will retry the durable manifest after NuGet indexing.");
                 }
 
                 release = await jobSource.SetNuGetReleasePackageStateAsync(job.Id, sha, item.Package.Id,
@@ -1033,7 +1033,8 @@ public class RemoteWorkerBackgroundService : BackgroundService
         string packagePath, string apiKey, string source, Func<string, Task> onLine, CancellationToken ct) =>
         NuGetPackagePusher.PushAsync(workingDirectory, packagePath, apiKey, source, onLine, ct);
 
-    internal virtual TimeSpan NuGetAvailabilityTimeout => TimeSpan.FromMinutes(2);
+    // The coordinator retries incomplete manifests after feed propagation without occupying a worker.
+    internal virtual TimeSpan NuGetAvailabilityTimeout => TimeSpan.FromSeconds(30);
     internal virtual TimeSpan NuGetAvailabilityPollInterval => TimeSpan.FromSeconds(3);
 
     private async Task ReportJobFailedBestEffort(Guid jobId, string error, CancellationToken ct)

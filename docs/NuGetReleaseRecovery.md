@@ -5,7 +5,7 @@ project ID and the full validated Git commit SHA. It records the package version
 exact IDs, SHA-256 of each staged `.nupkg`, NuGet's signature-independent content hash,
 and each durable artifact path. It also pins the push secret name and whether GitHub
 publication follows NuGet. Each package separately records `Prepared`, `Publishing`,
-`Incomplete`, `Complete`, or `InterventionRequired`.
+`AwaitingIndex`, `Incomplete`, `Complete`, or `InterventionRequired`.
 
 ## Deployment prerequisite
 
@@ -24,15 +24,23 @@ per-package progress. Read the job logs and the exact package versions on the fe
 The coordinator also stores the same data under
 `<Releases:RootDir>/<project-id-N>/<commit-sha>/`.
 
-For `Publishing` or `Incomplete`, POST `/api/projects/{projectId}/deploy` with
+For `AwaitingIndex`, Fleet releases the worker and queues another attempt after four
+minutes. The coordinator persists this decision, so a restart does not lose it. Each
+attempt verifies the exact remote package before any new push and reuses the stored
+bytes. After twelve failed attempts, Fleet changes the state to `Incomplete` and
+reports that manual recovery is required.
+
+For `Publishing`, `AwaitingIndex`, or `Incomplete`, an administrator can also POST
+`/api/projects/{projectId}/deploy` with
 `{"commitSha":"<full manifest SHA>"}` to queue another job for the **same project and
 full commit SHA**. The worker fetches the existing manifest and package bytes from the
 coordinator, checks all remote ID/version pairs, and resumes the missing packages. NuGet
 recovery does not require Git, build, tests, or repacking. A push timeout, lost response,
 or worker crash is
 therefore safe to retry: a matching downloadable package becomes `Complete`; a missing
-one is pushed from the same stored artifact. Delayed availability is polled for two
-minutes per push. A later retry checks again.
+one is pushed from the same stored artifact. Delayed availability is polled briefly
+after each push; the scheduled retry waits for NuGet indexing without occupying a
+worker.
 
 If `InterventionRequired` appears, stop automated retries. Preserve the manifest,
 staged files, logs, and feed response. Compare the feed's exact ID/version package to
