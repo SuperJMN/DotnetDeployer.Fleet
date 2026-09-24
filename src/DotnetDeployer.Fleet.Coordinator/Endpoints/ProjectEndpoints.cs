@@ -152,6 +152,13 @@ public static class ProjectEndpoints
         if (string.IsNullOrWhiteSpace(sha))
             return Results.BadRequest(new { error = $"Could not resolve a complete Git commit SHA for branch '{project.Branch}'." });
 
+        var active = (await storage.GetJobsByProjectAsync(id))
+            .FirstOrDefault(j => j.Kind == JobKind.Deploy
+                && string.Equals(j.TriggerCommitSha, sha, StringComparison.OrdinalIgnoreCase)
+                && j.Status is (JobStatus.Queued or JobStatus.Assigned or JobStatus.Running or JobStatus.AwaitingNuGetIndex));
+        if (active is not null)
+            return Results.Ok(active);
+
         var job = new DeploymentJob
         {
             ProjectId = id,

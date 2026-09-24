@@ -245,6 +245,7 @@ public class RemoteWorkerBackgroundService : BackgroundService
                     ? await jobSource.GetNuGetReleaseAsync(job.Id, job.TriggerCommitSha, jobCt)
                     : null;
                 var nugetRecovered = false;
+                var nugetAwaitingIndex = false;
                 if (existingRelease is not null)
                 {
                     if (existingRelease.Manifest.ProjectId != project.Id
@@ -264,7 +265,7 @@ public class RemoteWorkerBackgroundService : BackgroundService
                     await EmitPhaseAsync(job.Id, PhaseEventKind.Start, "worker.nuget.push",
                         attrs: new() { ["source"] = existingRelease.Manifest.Source }, ct: jobCt);
                     var resumeSw = System.Diagnostics.Stopwatch.StartNew();
-                    (bool Success, string? Error) recovered = (false, null);
+                    (bool Success, string? Error, bool AwaitingIndex) recovered = (false, null, false);
                     try
                     {
                         recovered = await PublishManifestAsync(job, existingRelease, resumeApiKey, repoStoragePath, Log, jobCt);
@@ -272,8 +273,10 @@ public class RemoteWorkerBackgroundService : BackgroundService
                     finally
                     {
                         resumeSw.Stop();
+                        nugetAwaitingIndex = recovered.AwaitingIndex;
                         await EmitPhaseAsync(job.Id, PhaseEventKind.End, "worker.nuget.push",
-                            status: recovered.Success ? PhaseStatus.Ok : PhaseStatus.Fail,
+                            status: recovered.Success ? PhaseStatus.Ok
+                                : nugetAwaitingIndex ? PhaseStatus.Waiting : PhaseStatus.Fail,
                             durationMs: resumeSw.ElapsedMilliseconds, ct: jobCt);
                         await logBuffer.FlushAsync();
                     }
@@ -285,14 +288,22 @@ public class RemoteWorkerBackgroundService : BackgroundService
                     jobCt.ThrowIfCancellationRequested();
                     if (!recovered.Success)
                     {
-                        await Log($"=== Deployment FAILED: {recovered.Error} ===");
-                        await jobSource.ReportJobCompletedAsync(job.Id, false, recovered.Error, ct);
+                        if (nugetAwaitingIndex)
+                        {
+                            await Log("=== Waiting for NuGet indexing; Fleet will resume this deployment automatically ===");
+                            await jobSource.ReportJobAwaitingNuGetIndexAsync(job.Id, ct);
+                        }
+                        else
+                        {
+                            await Log($"=== Deployment FAILED: {recovered.Error} ===");
+                            await jobSource.ReportJobCompletedAsync(job.Id, false, recovered.Error, ct);
+                        }
                         return;
                     }
                     nugetRecovered = true;
                     if (!existingRelease.Manifest.RequiresGitHubPublish)
                     {
-                        await Log("=== All NuGet packages pushed successfully and verified ===");
+                        await Log("=== All NuGet package pushes accepted or exact existing packages verified ===");
                         await jobSource.ReportJobCompletedAsync(job.Id, true, null, ct);
                         return;
                     }
@@ -736,9 +747,13 @@ public class RemoteWorkerBackgroundService : BackgroundService
                             return (false, "Durable release manifest is invalid for this project and commit; manual intervention required.");
 
                         var publish = await PublishManifestAsync(job, release, pushApiKey, localPath, Log, token);
-                        if (!publish.Success) return publish;
+                        if (!publish.Success)
+                        {
+                            nugetAwaitingIndex = publish.AwaitingIndex;
+                            return (publish.Success, publish.Error);
+                        }
 
-                        await Log("=== All NuGet packages pushed successfully and verified ===");
+                        await Log("=== All NuGet package pushes accepted or exact existing packages verified ===");
                         result = (true, null);
                         return result;
                     }
@@ -746,7 +761,8 @@ public class RemoteWorkerBackgroundService : BackgroundService
                     {
                         pushSw.Stop();
                         await EmitPhaseAsync(job.Id, PhaseEventKind.End, "worker.nuget.push",
-                            status: result.Success ? PhaseStatus.Ok : PhaseStatus.Fail,
+                            status: result.Success ? PhaseStatus.Ok
+                                : nugetAwaitingIndex ? PhaseStatus.Waiting : PhaseStatus.Fail,
                             durationMs: pushSw.ElapsedMilliseconds, ct: token);
                         await logBuffer.FlushAsync();
                     }
@@ -857,10 +873,18 @@ public class RemoteWorkerBackgroundService : BackgroundService
                 }
                 else
                 {
-                    await Log(job.Kind == JobKind.PackageBuild
-                        ? $"=== Package build FAILED: {error} ==="
-                        : $"=== Deployment FAILED: {error} ===");
-                    await jobSource.ReportJobCompletedAsync(job.Id, false, error, ct);
+                    if (nugetAwaitingIndex)
+                    {
+                        await Log("=== Waiting for NuGet indexing; Fleet will resume this deployment automatically ===");
+                        await jobSource.ReportJobAwaitingNuGetIndexAsync(job.Id, ct);
+                    }
+                    else
+                    {
+                        await Log(job.Kind == JobKind.PackageBuild
+                            ? $"=== Package build FAILED: {error} ==="
+                            : $"=== Deployment FAILED: {error} ===");
+                        await jobSource.ReportJobCompletedAsync(job.Id, false, error, ct);
+                    }
                 }
             }
             finally
@@ -915,7 +939,7 @@ public class RemoteWorkerBackgroundService : BackgroundService
         }
     }
 
-    private async Task<(bool Success, string? Error)> PublishManifestAsync(
+    private async Task<(bool Success, string? Error, bool AwaitingIndex)> PublishManifestAsync(
         DeploymentJob job, NuGetReleaseSnapshot release, string? pushApiKey,
         string workingDirectory, Func<string, Task> onLine, CancellationToken token)
     {
@@ -937,31 +961,35 @@ public class RemoteWorkerBackgroundService : BackgroundService
                     || !string.Equals(identity.Version, package.Version, StringComparison.OrdinalIgnoreCase)
                     || !string.Equals(identity.Sha256, package.Sha256, StringComparison.OrdinalIgnoreCase)
                     || !string.Equals(identity.ContentHash, package.ContentHash, StringComparison.Ordinal))
-                    return (false, $"Durable artifact for {package.Id} does not match immutable manifest; intervention required.");
+                    return (false, $"Durable artifact for {package.Id} does not match immutable manifest; intervention required.", false);
                 staged.Add((package, path, identity));
             }
 
-            // Check every ID/version before the first new push, including packages
-            // marked complete by an earlier attempt.
+            // A successful push is durable release progress. Do not make a later
+            // GitHub retry depend on whether NuGet has indexed that package yet.
             var preflight = new Dictionary<string, FeedPackageStatus>(StringComparer.OrdinalIgnoreCase);
             foreach (var item in staged)
             {
                 var state = release.Progress.Single(p => string.Equals(p.Id, item.Package.Id, StringComparison.OrdinalIgnoreCase));
                 if (state.State == NuGetReleasePackageState.InterventionRequired)
-                    return (false, $"{item.Package.Id} requires manual intervention: {state.Detail}");
+                    return (false, $"{item.Package.Id} requires manual intervention: {state.Detail}", false);
+                if (state.State == NuGetReleasePackageState.Complete)
+                    continue;
                 var found = await verifier.CheckAsync(release.Manifest.Source, item.Identity, token);
                 preflight[item.Package.Id] = found;
-                if (found == FeedPackageStatus.Conflict || found == FeedPackageStatus.Missing && state.State == NuGetReleasePackageState.Complete)
+                if (found == FeedPackageStatus.Conflict)
                 {
                     var conflict = $"Remote {item.Package.Id} {item.Package.Version} conflicts with the immutable release manifest.";
                     await jobSource.SetNuGetReleasePackageStateAsync(job.Id, sha, item.Package.Id,
                         NuGetReleasePackageState.InterventionRequired, conflict, token);
-                    return (false, conflict);
+                    return (false, conflict, false);
                 }
             }
 
             foreach (var item in staged)
             {
+                if (!preflight.ContainsKey(item.Package.Id))
+                    continue;
                 if (preflight[item.Package.Id] == FeedPackageStatus.Equivalent)
                 {
                     release = await jobSource.SetNuGetReleasePackageStateAsync(job.Id, sha, item.Package.Id,
@@ -971,7 +999,7 @@ public class RemoteWorkerBackgroundService : BackgroundService
                 }
 
                 if (string.IsNullOrWhiteSpace(pushApiKey))
-                    return (false, $"NuGet push secret '{release.Manifest.ApiKeySecretName}' not found in configured secrets.");
+                    return (false, $"NuGet push secret '{release.Manifest.ApiKeySecretName}' not found in configured secrets.", false);
 
                 release = await jobSource.SetNuGetReleasePackageStateAsync(job.Id, sha, item.Package.Id,
                     NuGetReleasePackageState.Publishing, "Push started", token);
@@ -987,6 +1015,14 @@ public class RemoteWorkerBackgroundService : BackgroundService
                     push = (false, $"Ambiguous push response: {ex.Message}");
                 }
 
+                if (push.Success)
+                {
+                    release = await jobSource.SetNuGetReleasePackageStateAsync(job.Id, sha, item.Package.Id,
+                        NuGetReleasePackageState.Complete, "NuGet accepted the package push", token);
+                    await onLine($"[nuget.release] {item.Package.Id} {item.Package.Version}: push accepted by NuGet.");
+                    continue;
+                }
+
                 FeedPackageStatus found;
                 try
                 {
@@ -997,7 +1033,7 @@ public class RemoteWorkerBackgroundService : BackgroundService
                 {
                     await jobSource.SetNuGetReleasePackageStateAsync(job.Id, sha, item.Package.Id,
                         NuGetReleasePackageState.Incomplete, $"Remote lookup unavailable after push: {ex.Message}", token);
-                    return (false, $"Remote lookup unavailable after pushing {item.Package.Id}; retry the release from durable artifacts.");
+                    return (false, $"Remote lookup unavailable after pushing {item.Package.Id}; retry the release from durable artifacts.", false);
                 }
 
                 if (found == FeedPackageStatus.Conflict)
@@ -1005,13 +1041,13 @@ public class RemoteWorkerBackgroundService : BackgroundService
                     var conflict = $"Remote {item.Package.Id} {item.Package.Version} differs from the release artifact after push.";
                     await jobSource.SetNuGetReleasePackageStateAsync(job.Id, sha, item.Package.Id,
                         NuGetReleasePackageState.InterventionRequired, conflict, token);
-                    return (false, conflict);
+                    return (false, conflict, false);
                 }
                 if (found == FeedPackageStatus.Missing)
                 {
                     await jobSource.SetNuGetReleasePackageStateAsync(job.Id, sha, item.Package.Id,
                         NuGetReleasePackageState.AwaitingIndex, push.Error ?? "Package not downloadable after push", token);
-                    return (false, $"{item.Package.Id} is not yet downloadable; release incomplete. Fleet will retry the durable manifest after NuGet indexing.");
+                    return (false, $"{item.Package.Id} is not yet downloadable; release incomplete. Fleet will retry the durable manifest after NuGet indexing.", true);
                 }
 
                 release = await jobSource.SetNuGetReleasePackageStateAsync(job.Id, sha, item.Package.Id,
@@ -1020,20 +1056,20 @@ public class RemoteWorkerBackgroundService : BackgroundService
             }
 
             if (release.Progress.Any(p => p.State != NuGetReleasePackageState.Complete))
-                return (false, "NuGet release is incomplete; final announcement withheld.");
+                return (false, "NuGet release is incomplete; final announcement withheld.", false);
         }
         finally
         {
             try { Directory.Delete(stageDir, recursive: true); } catch { }
         }
-        return (true, null);
+        return (true, null, false);
     }
 
     internal virtual Task<(bool Success, string? Error)> PushPackageAsync(string workingDirectory,
         string packagePath, string apiKey, string source, Func<string, Task> onLine, CancellationToken ct) =>
         NuGetPackagePusher.PushAsync(workingDirectory, packagePath, apiKey, source, onLine, ct);
 
-    // The coordinator retries incomplete manifests after feed propagation without occupying a worker.
+    // Only an ambiguous or rejected push needs remote verification and possible retry.
     internal virtual TimeSpan NuGetAvailabilityTimeout => TimeSpan.FromSeconds(30);
     internal virtual TimeSpan NuGetAvailabilityPollInterval => TimeSpan.FromSeconds(3);
 

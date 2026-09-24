@@ -112,7 +112,7 @@ public sealed class ReleaseJobsStagingDemonstrationTests : IDisposable
         logLines.Should().Contain(l => l.Contains("Solution build SUCCEEDED"));
         logLines.Should().Contain(l => l.Contains("Solution tests SUCCEEDED"));
         logLines.Should().Contain(l => l.Contains("Package inventory verified successfully"));
-        logLines.Should().Contain(l => l.Contains("All NuGet packages pushed successfully"));
+        logLines.Should().Contain(l => l.Contains("All NuGet package pushes accepted"));
         logLines.Should().NotContain(l => l.Contains("staging-secret-key"));
         logLines.Should().NotContain(l => l.Contains("staging-gh-token"));
 
@@ -199,7 +199,7 @@ public sealed class ReleaseJobsStagingDemonstrationTests : IDisposable
         logLines.Should().NotContain(l => l.Contains(c2Sha));
         logLines.Should().Contain(l => l.Contains("Solution build SUCCEEDED"));
         logLines.Should().Contain(l => l.Contains("Solution tests SUCCEEDED"));
-        logLines.Should().Contain(l => l.Contains("All NuGet packages pushed successfully"));
+        logLines.Should().Contain(l => l.Contains("All NuGet package pushes accepted"));
 
         // Assert: Staging feed contains the package corresponding to C1 (1.0.0), NOT C2 (2.0.0)
         var stagedPackages = Directory.GetFiles(stagingFeedDir, "*.nupkg", SearchOption.AllDirectories);
@@ -273,7 +273,7 @@ public sealed class ReleaseJobsStagingDemonstrationTests : IDisposable
         logLines.Should().NotBeEmpty();
         logLines.Should().Contain(l => l.Contains("Solution build FAILED") || l.Contains("error CS") || l.Contains("invalid C# syntax"));
         logLines.Should().NotContain(l => l.Contains("Solution tests SUCCEEDED"));
-        logLines.Should().NotContain(l => l.Contains("All NuGet packages pushed successfully"));
+        logLines.Should().NotContain(l => l.Contains("All NuGet package pushes accepted"));
 
         // Staging feed must remain empty
         Directory.GetFiles(stagingFeedDir, "*.nupkg", SearchOption.AllDirectories).Should().BeEmpty();
@@ -339,7 +339,7 @@ public sealed class ReleaseJobsStagingDemonstrationTests : IDisposable
         logLines.Should().Contain(l => l.Contains("Solution build SUCCEEDED"));
         logLines.Should().Contain(l => l.Contains("Solution tests FAILED") || l.Contains("Simulated test failure") || l.Contains("Failed"));
         logLines.Should().NotContain(l => l.Contains("Package inventory verified"));
-        logLines.Should().NotContain(l => l.Contains("All NuGet packages pushed successfully"));
+        logLines.Should().NotContain(l => l.Contains("All NuGet package pushes accepted"));
 
         // Staging feed must remain empty
         Directory.GetFiles(stagingFeedDir, "*.nupkg", SearchOption.AllDirectories).Should().BeEmpty();
@@ -400,7 +400,7 @@ public sealed class ReleaseJobsStagingDemonstrationTests : IDisposable
         logLines.Should().Contain(l => l.Contains("Solution build SUCCEEDED"));
         logLines.Should().Contain(l => l.Contains("Solution tests SUCCEEDED"));
         logLines.Should().Contain(l => l.Contains("missing: [ExtraLib]"));
-        logLines.Should().NotContain(l => l.Contains("All NuGet packages pushed successfully"));
+        logLines.Should().NotContain(l => l.Contains("All NuGet package pushes accepted"));
 
         // Staging feed must remain empty
         Directory.GetFiles(stagingFeedDir, "*.nupkg", SearchOption.AllDirectories).Should().BeEmpty();
@@ -461,7 +461,7 @@ public sealed class ReleaseJobsStagingDemonstrationTests : IDisposable
         var logLines = logs.Select(l => l.Line).ToList();
         logLines.Should().NotBeEmpty();
         logLines.Should().Contain(l => l.Contains("conflicts with the immutable release manifest"));
-        logLines.Should().NotContain(l => l.Contains("All NuGet packages pushed successfully"));
+        logLines.Should().NotContain(l => l.Contains("All NuGet package pushes accepted"));
 
         // Assert: Staging feed file was NOT overwritten and preserves initial conflicting bytes
         File.Exists(existingPkgPath).Should().BeTrue();
@@ -500,7 +500,9 @@ public sealed class ReleaseJobsStagingDemonstrationTests : IDisposable
         });
         await firstWorker.ExecuteJobAsync(firstJob, CancellationToken.None);
 
-        (await storage.GetJobAsync(firstJob.Id))!.Status.Should().Be(JobStatus.Failed);
+        (await storage.GetJobAsync(firstJob.Id))!.Status.Should().Be(JobStatus.AwaitingNuGetIndex);
+        (await storage.GetJobPhasesAsync(firstJob.Id))
+            .Should().Contain(p => p.Name == "worker.nuget.push" && p.Status == PhaseStatus.Waiting);
         Directory.GetFiles(feed, "*.nupkg", SearchOption.AllDirectories).Should().HaveCount(1);
         var afterFirst = await jobSource.GetNuGetReleaseAsync(firstJob.Id, sha);
         afterFirst.Should().NotBeNull();
@@ -514,12 +516,10 @@ public sealed class ReleaseJobsStagingDemonstrationTests : IDisposable
         project.GitUrl = Path.Combine(repo, "source-no-longer-available");
         await storage.UpdateProjectAsync(project);
 
-        var retryJob = new DeploymentJob
-        {
-            Id = Guid.NewGuid(), ProjectId = project.Id, Kind = JobKind.Deploy,
-            TriggerCommitSha = sha, Status = JobStatus.Assigned, WorkerId = worker.Id
-        };
-        await storage.AddJobAsync(retryJob);
+        var priorPhaseCount = (await storage.GetJobPhasesAsync(firstJob.Id)).Count;
+        firstJob.Status = JobStatus.Assigned;
+        firstJob.WorkerId = worker.Id;
+        await storage.UpdateJobAsync(firstJob);
         var retryPushes = 0;
         var freshWorker = NewStagingWorker(storage, jobSource, worker.Id, (package, source) =>
         {
@@ -527,14 +527,14 @@ public sealed class ReleaseJobsStagingDemonstrationTests : IDisposable
             File.Copy(package, Path.Combine(source, Path.GetFileName(package)));
             return Task.FromResult<(bool, string?)>((true, null));
         });
-        await freshWorker.ExecuteJobAsync(retryJob, CancellationToken.None);
+        await freshWorker.ExecuteJobAsync(firstJob, CancellationToken.None);
 
-        (await storage.GetJobAsync(retryJob.Id))!.Status.Should().Be(JobStatus.Succeeded);
+        (await storage.GetJobAsync(firstJob.Id))!.Status.Should().Be(JobStatus.Succeeded);
         retryPushes.Should().Be(1);
-        var retryPhases = await storage.GetJobPhasesAsync(retryJob.Id);
+        var retryPhases = (await storage.GetJobPhasesAsync(firstJob.Id)).Skip(priorPhaseCount).ToList();
         retryPhases.Select(p => p.Name).Should().NotContain(["worker.solution.build", "worker.solution.test", "worker.deployer.pack"]);
         retryPhases.Select(p => p.Name).Should().NotContain("worker.git.clone");
-        var completed = await jobSource.GetNuGetReleaseAsync(retryJob.Id, sha);
+        var completed = await jobSource.GetNuGetReleaseAsync(firstJob.Id, sha);
         completed!.Progress.Should().OnlyContain(p => p.State == NuGetReleasePackageState.Complete);
         completed.Manifest.Packages.ToDictionary(p => p.Id, p => p.Sha256).Should().BeEquivalentTo(immutableHash);
         Directory.GetFiles(feed, "*.nupkg", SearchOption.AllDirectories).Should().HaveCount(2);
@@ -544,8 +544,8 @@ public sealed class ReleaseJobsStagingDemonstrationTests : IDisposable
     [InlineData("equivalent-409", true, NuGetReleasePackageState.Complete)]
     [InlineData("conflicting-409", false, NuGetReleasePackageState.InterventionRequired)]
     [InlineData("ambiguous-timeout", true, NuGetReleasePackageState.Complete)]
-    [InlineData("delayed-availability", true, NuGetReleasePackageState.Complete)]
-    public async Task Push_outcomes_are_decided_by_downloaded_staging_feed_content(
+    [InlineData("accepted-before-indexing", true, NuGetReleasePackageState.Complete)]
+    public async Task Push_outcomes_use_acceptance_or_verified_download_when_response_is_ambiguous(
         string scenario, bool shouldSucceed, NuGetReleasePackageState expectedState)
     {
         var feed = CreateTempDir("staging-" + scenario);
@@ -567,17 +567,8 @@ public sealed class ReleaseJobsStagingDemonstrationTests : IDisposable
         var simulatedWorker = NewStagingWorker(storage, jobSource, worker.Id, async (package, source) =>
         {
             var destination = Path.Combine(source, Path.GetFileName(package));
-            if (scenario == "delayed-availability")
-            {
-                _ = Task.Run(async () =>
-                {
-                    await Task.Delay(80);
-                    var pending = destination + ".pending";
-                    File.Copy(package, pending);
-                    File.Move(pending, destination);
-                });
+            if (scenario == "accepted-before-indexing")
                 return (true, (string?)null);
-            }
 
             File.Copy(package, destination);
             if (scenario == "conflicting-409")
@@ -592,9 +583,30 @@ public sealed class ReleaseJobsStagingDemonstrationTests : IDisposable
         var release = await jobSource.GetNuGetReleaseAsync(job.Id, sha);
         release.Should().NotBeNull();
         release!.Progress.Single().State.Should().Be(expectedState);
-        var feedPackage = Directory.GetFiles(feed, "*.nupkg", SearchOption.AllDirectories).Single();
-        if (shouldSucceed)
-            NuGetPackageReader.ReadPackageId(feedPackage).Should().Be("DemoLib");
+        if (scenario == "accepted-before-indexing")
+        {
+            Directory.GetFiles(feed, "*.nupkg", SearchOption.AllDirectories).Should().BeEmpty();
+            // A later retry (for example after a failed GitHub step) must retain the
+            // acknowledged push even while the feed still returns no package.
+            job.Status = JobStatus.Assigned;
+            job.WorkerId = worker.Id;
+            await storage.UpdateJobAsync(job);
+            var repeatedPushes = 0;
+            var retryWorker = NewStagingWorker(storage, jobSource, worker.Id, (_, _) =>
+            {
+                repeatedPushes++;
+                return Task.FromResult<(bool, string?)>((true, null));
+            });
+            await retryWorker.ExecuteJobAsync(job, CancellationToken.None);
+            (await storage.GetJobAsync(job.Id))!.Status.Should().Be(JobStatus.Succeeded);
+            repeatedPushes.Should().Be(0);
+        }
+        else
+        {
+            var feedPackage = Directory.GetFiles(feed, "*.nupkg", SearchOption.AllDirectories).Single();
+            if (shouldSucceed)
+                NuGetPackageReader.ReadPackageId(feedPackage).Should().Be("DemoLib");
+        }
     }
 
     private RemoteWorkerBackgroundService NewStagingWorker(IFleetStorage storage,
@@ -689,7 +701,7 @@ public sealed class ReleaseJobsStagingDemonstrationTests : IDisposable
         var logLines = logs.Select(l => l.Line).ToList();
         logLines.Should().NotBeEmpty();
         logLines.Should().Contain(l => l.Contains("=== Deployment CANCELLED by user ==="));
-        logLines.Should().NotContain(l => l.Contains("All NuGet packages pushed successfully"));
+        logLines.Should().NotContain(l => l.Contains("All NuGet package pushes accepted"));
 
         // Staging feed must remain empty
         Directory.GetFiles(stagingFeedDir, "*.nupkg", SearchOption.AllDirectories).Should().BeEmpty();
@@ -745,7 +757,7 @@ public sealed class ReleaseJobsStagingDemonstrationTests : IDisposable
 
         var logs = await storage.GetLogsAsync(job.Id);
         var logLines = logs.Select(l => l.Line).ToList();
-        logLines.Should().NotContain(l => l.Contains("All NuGet packages pushed successfully"));
+        logLines.Should().NotContain(l => l.Contains("All NuGet package pushes accepted"));
 
         Directory.GetFiles(stagingFeedDir, "*.nupkg", SearchOption.AllDirectories).Should().BeEmpty();
     }
@@ -808,7 +820,7 @@ public sealed class ReleaseJobsStagingDemonstrationTests : IDisposable
         logLines.Should().NotBeEmpty();
         logLines.Should().Contain(l => l.Contains(nonExistentSha) || l.Contains("git") || l.Contains("fatal") || l.Contains("Failed"));
         logLines.Should().NotContain(l => l.Contains("Solution build SUCCEEDED"));
-        logLines.Should().NotContain(l => l.Contains("All NuGet packages pushed successfully"));
+        logLines.Should().NotContain(l => l.Contains("All NuGet package pushes accepted"));
 
         // Staging feed must remain empty
         Directory.GetFiles(stagingFeedDir, "*.nupkg", SearchOption.AllDirectories).Should().BeEmpty();
@@ -1229,6 +1241,18 @@ public sealed class ReleaseJobsStagingDemonstrationTests : IDisposable
                 : success ? JobStatus.Succeeded : JobStatus.Failed;
             job.FinishedAt = DateTimeOffset.UtcNow;
             job.ErrorMessage = errorMessage;
+            await storage.UpdateJobAsync(job, CancellationToken.None);
+        }
+
+        public async Task ReportJobAwaitingNuGetIndexAsync(Guid jobId, CancellationToken ct = default)
+        {
+            var job = await storage.GetJobAsync(jobId, CancellationToken.None)
+                ?? throw new InvalidOperationException($"Job {jobId} not found");
+            job.Status = JobStatus.AwaitingNuGetIndex;
+            job.WorkerId = null;
+            job.AssignedAt = null;
+            job.StartedAt = null;
+            job.ErrorMessage = null;
             await storage.UpdateJobAsync(job, CancellationToken.None);
         }
 

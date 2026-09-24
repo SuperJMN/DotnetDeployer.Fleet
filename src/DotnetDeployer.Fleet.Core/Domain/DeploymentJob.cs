@@ -13,6 +13,8 @@ public class DeploymentJob
 
     public bool IsAutoTriggered { get; set; } = false;
     public DateTimeOffset EnqueuedAt { get; set; } = DateTimeOffset.UtcNow;
+    /// <summary>Original queue time retained when a NuGet indexing wait requeues this job.</summary>
+    public DateTimeOffset? InitialEnqueuedAt { get; set; }
     /// <summary>When the coordinator placed this job in a worker's queue (Status=Assigned).</summary>
     public DateTimeOffset? AssignedAt { get; set; }
     public DateTimeOffset? StartedAt { get; set; }
@@ -71,7 +73,7 @@ public class DeploymentJob
         if (FinishedAt is not null && TotalDurationMs is not null)
             return TotalDurationMs;
 
-        var start = EnqueuedAt != default ? EnqueuedAt : StartedAt ?? AssignedAt;
+        var start = InitialEnqueuedAt ?? (EnqueuedAt != default ? EnqueuedAt : StartedAt ?? AssignedAt);
         if (start is null)
             return null;
 

@@ -91,9 +91,9 @@ internal static class NuGetPackagePusher
         {
             if (duplicateConflictDetected)
             {
-                var conflictError = $"Conflict: Package '{packageFileName}' already exists in feed '{source}' (HTTP 409 Conflict). Release failed closed to prevent serving unverified or conflicting revision bytes.";
-                await onLine($"[nuget.push] CONFLICT: {conflictError}");
-                return (false, conflictError);
+                var unverified = $"Package '{packageFileName}' returned HTTP 409 from '{source}'; its remote contents must be verified after it becomes downloadable.";
+                await onLine($"[nuget.push] HTTP 409: {unverified}");
+                return (false, unverified);
             }
 
             return (false, $"dotnet nuget push for '{packageFileName}' exited with code {exitCode}");
@@ -119,9 +119,9 @@ internal static class NuGetPackagePusher
         {
             // For remote feeds, if duplicate or conflict was detected, NEVER declare success
             // without verifying remote artifact identity.
-            var conflictError = $"Conflict: Duplicate package '{packageFileName}' was detected on remote feed '{source}' and remote artifact identity could not be verified. Release failed closed.";
-            await onLine($"[nuget.push] CONFLICT: {conflictError}");
-            return (false, conflictError);
+            var unverified = $"Duplicate package '{packageFileName}' was reported by remote feed '{source}'; remote artifact identity has not been verified.";
+            await onLine($"[nuget.push] Unverified duplicate: {unverified}");
+            return (false, unverified);
         }
 
         return (true, null);

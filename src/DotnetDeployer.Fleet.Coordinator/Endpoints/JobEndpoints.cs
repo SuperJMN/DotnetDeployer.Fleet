@@ -365,6 +365,7 @@ public static class JobEndpoints
         [FromBody] CompleteJobRequest req,
         HttpContext httpContext,
         IFleetStorage storage,
+        NuGetReleaseStore releases,
         LogBroadcaster broadcaster,
         JobAssignmentSignal signal)
     {
@@ -379,11 +380,32 @@ public static class JobEndpoints
             return Results.Conflict(new { message = "Job is already in a terminal state." });
 
         var now = DateTimeOffset.UtcNow;
-        job.Status = job.CancellationRequestedAt is not null && !req.Success
-            ? JobStatus.Cancelled
-            : req.Success ? JobStatus.Succeeded : JobStatus.Failed;
-        job.MarkFinished(now);
-        job.ErrorMessage = req.ErrorMessage;
+        if (req.AwaitingNuGetIndex && job.CancellationRequestedAt is null)
+        {
+            if (req.Success || job.Kind != JobKind.Deploy || string.IsNullOrWhiteSpace(job.TriggerCommitSha))
+                return Results.BadRequest(new { message = "Only an incomplete NuGet release can await indexing." });
+            var release = await releases.GetAsync(job.ProjectId, job.TriggerCommitSha);
+            if (release is null || !release.Progress.Any(p => p.State == NuGetReleasePackageState.AwaitingIndex)
+                || release.Progress.Any(p => p.State == NuGetReleasePackageState.InterventionRequired))
+                return Results.BadRequest(new { message = "The release is not awaiting NuGet indexing." });
+
+            job.Status = JobStatus.AwaitingNuGetIndex;
+            job.WorkerId = null;
+            job.AssignedAt = null;
+            job.StartedAt = null;
+            job.EstimatedDurationMs = null;
+            job.CurrentPhase = null;
+            job.CurrentPhaseStartedAt = null;
+            job.ErrorMessage = null;
+        }
+        else
+        {
+            job.Status = job.CancellationRequestedAt is not null && !req.Success
+                ? JobStatus.Cancelled
+                : req.Success ? JobStatus.Succeeded : JobStatus.Failed;
+            job.MarkFinished(now);
+            job.ErrorMessage = req.ErrorMessage;
+        }
         await storage.UpdateJobAsync(job);
 
         // EWMA update: only on success — failed runs are noise, not signal. We need a
@@ -399,7 +421,8 @@ public static class JobEndpoints
             await storage.UpsertJobDurationStatAsync(job.ProjectId, workerId, newEwma, samples);
         }
 
-        broadcaster.Complete(id);
+        if (job.Status != JobStatus.AwaitingNuGetIndex)
+            broadcaster.Complete(id);
 
         // The worker just freed a slot — wake the scheduler so the next queued job (if
         // any) gets considered for this worker straight away.
@@ -408,7 +431,7 @@ public static class JobEndpoints
     }
 
     public record AppendLogsRequest(string[] Lines);
-    public record CompleteJobRequest(bool Success, string? ErrorMessage);
+    public record CompleteJobRequest(bool Success, string? ErrorMessage, bool AwaitingNuGetIndex = false);
 
     /// <summary>
     /// Wire-format for a phase event posted by a worker. Mirrors
@@ -628,7 +651,7 @@ public static class JobEndpoints
 
         var now = DateTimeOffset.UtcNow;
         job.CancellationRequestedAt = now;
-        var completedImmediately = job.Status is JobStatus.Queued or JobStatus.Assigned;
+        var completedImmediately = job.Status is JobStatus.Queued or JobStatus.Assigned or JobStatus.AwaitingNuGetIndex;
 
         if (completedImmediately)
         {
