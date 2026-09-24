@@ -41,7 +41,7 @@ public sealed class ReleaseJobsStagingDemonstrationTests : IDisposable
     public async Task Scenario1_HappyPath_releases_exact_inventory_to_staging_feed()
     {
         var stagingFeedDir = CreateTempDir("staging-feed-happy");
-        var (storage, _, worker, workerService) = await SetupCoordinatorAndWorkerAsync(stagingFeedDir);
+        var (storage, _, worker, workerService, _) = await SetupCoordinatorAndWorkerAsync(stagingFeedDir);
         var (repoDir, commitSha) = await CreateTestRepoAsync("happy", stagingFeedDir, version: "1.0.0", tag: "v1.0.0");
 
         var project = new Project
@@ -104,28 +104,39 @@ public sealed class ReleaseJobsStagingDemonstrationTests : IDisposable
         var pushPhase = phases.First(p => p.Name == "worker.nuget.push");
         pushPhase.Status.Should().Be(PhaseStatus.Ok);
 
-        // Assert: Logs contain evidence of each step
+        // Assert: Logs contain evidence of each step and no secrets
         var logs = await storage.GetLogsAsync(job.Id);
         var logLines = logs.Select(l => l.Line).ToList();
+        logLines.Should().NotBeEmpty();
+        logLines.Should().Contain(l => l.Contains(commitSha));
         logLines.Should().Contain(l => l.Contains("Solution build SUCCEEDED"));
         logLines.Should().Contain(l => l.Contains("Solution tests SUCCEEDED"));
         logLines.Should().Contain(l => l.Contains("Package inventory verified successfully"));
         logLines.Should().Contain(l => l.Contains("All NuGet packages pushed successfully"));
+        logLines.Should().NotContain(l => l.Contains("staging-secret-key"));
+        logLines.Should().NotContain(l => l.Contains("staging-gh-token"));
 
-        // Assert: Staging feed contains the published package matching the exact inventory
+        // Assert: Staging feed contains the published package matching the exact inventory and commit SHA
         var stagedPackages = Directory.GetFiles(stagingFeedDir, "*.nupkg", SearchOption.AllDirectories);
         stagedPackages.Should().HaveCount(1);
         Path.GetFileName(stagedPackages[0]).Should().Be("DemoLib.1.0.0.nupkg");
 
         var pkgId = NuGetPackageReader.ReadPackageId(stagedPackages[0]);
         pkgId.Should().Be("DemoLib");
+
+        using var archive = ZipFile.OpenRead(stagedPackages[0]);
+        var nuspecEntry = archive.Entries.First(e => e.Name.EndsWith(".nuspec", StringComparison.OrdinalIgnoreCase));
+        using var reader = new StreamReader(nuspecEntry.Open());
+        var nuspecXml = await reader.ReadToEndAsync();
+        nuspecXml.Should().Contain("<version>1.0.0</version>");
+        nuspecXml.Should().Contain($"""commit="{commitSha}""");
     }
 
     [Fact]
     public async Task Scenario2_MovingBranch_releases_pinned_commit_and_not_advanced_branch_tip()
     {
         var stagingFeedDir = CreateTempDir("staging-feed-moving");
-        var (storage, _, worker, workerService) = await SetupCoordinatorAndWorkerAsync(stagingFeedDir);
+        var (storage, _, worker, workerService, _) = await SetupCoordinatorAndWorkerAsync(stagingFeedDir);
 
         // 1. Upstream repo has initial commit C1 (tag v1.0.0, Version 1.0.0)
         var (repoDir, c1Sha) = await CreateTestRepoAsync("moving", stagingFeedDir, version: "1.0.0", tag: "v1.0.0");
@@ -168,25 +179,49 @@ public sealed class ReleaseJobsStagingDemonstrationTests : IDisposable
         finishedJob!.Status.Should().Be(JobStatus.Succeeded);
         finishedJob.TriggerCommitSha.Should().Be(c1Sha);
 
+        // Assert: Phases for C1 release completed ok
+        var phases = await storage.GetJobPhasesAsync(job.Id);
+        var phaseNames = phases.Select(p => p.Name).ToList();
+        phaseNames.Should().Contain([
+            "worker.git.clone",
+            "worker.solution.build",
+            "worker.solution.test",
+            "worker.deployer.pack",
+            "worker.inventory.verify",
+            "worker.nuget.push"
+        ]);
+
+        // Assert: Logs contain evidence of C1, not C2
+        var logs = await storage.GetLogsAsync(job.Id);
+        var logLines = logs.Select(l => l.Line).ToList();
+        logLines.Should().NotBeEmpty();
+        logLines.Should().Contain(l => l.Contains(c1Sha));
+        logLines.Should().NotContain(l => l.Contains(c2Sha));
+        logLines.Should().Contain(l => l.Contains("Solution build SUCCEEDED"));
+        logLines.Should().Contain(l => l.Contains("Solution tests SUCCEEDED"));
+        logLines.Should().Contain(l => l.Contains("All NuGet packages pushed successfully"));
+
         // Assert: Staging feed contains the package corresponding to C1 (1.0.0), NOT C2 (2.0.0)
         var stagedPackages = Directory.GetFiles(stagingFeedDir, "*.nupkg", SearchOption.AllDirectories);
         stagedPackages.Should().HaveCount(1);
         Path.GetFileName(stagedPackages[0]).Should().Be("DemoLib.1.0.0.nupkg");
 
-        // Open the package archive and verify the nuspec version is 1.0.0
+        // Open the package archive and verify the nuspec version is 1.0.0 and commit is c1Sha, NOT c2Sha
         using var archive = ZipFile.OpenRead(stagedPackages[0]);
         var nuspecEntry = archive.Entries.First(e => e.Name.EndsWith(".nuspec", StringComparison.OrdinalIgnoreCase));
         using var reader = new StreamReader(nuspecEntry.Open());
         var nuspecXml = await reader.ReadToEndAsync();
         nuspecXml.Should().Contain("<version>1.0.0</version>");
         nuspecXml.Should().NotContain("<version>2.0.0</version>");
+        nuspecXml.Should().Contain($"""commit="{c1Sha}""");
+        nuspecXml.Should().NotContain($"""commit="{c2Sha}""");
     }
 
     [Fact]
     public async Task Scenario3_BuildFailure_halts_pipeline_and_leaves_staging_feed_empty()
     {
         var stagingFeedDir = CreateTempDir("staging-feed-build-fail");
-        var (storage, _, worker, workerService) = await SetupCoordinatorAndWorkerAsync(stagingFeedDir);
+        var (storage, _, worker, workerService, _) = await SetupCoordinatorAndWorkerAsync(stagingFeedDir);
         var (repoDir, commitSha) = await CreateTestRepoAsync("build-fail", stagingFeedDir, failBuild: true);
 
         var project = new Project
@@ -232,6 +267,14 @@ public sealed class ReleaseJobsStagingDemonstrationTests : IDisposable
         phases.Should().NotContain(p => p.Name == "worker.inventory.verify");
         phases.Should().NotContain(p => p.Name == "worker.nuget.push");
 
+        // Assert: Logs contain build error details and no push
+        var logs = await storage.GetLogsAsync(job.Id);
+        var logLines = logs.Select(l => l.Line).ToList();
+        logLines.Should().NotBeEmpty();
+        logLines.Should().Contain(l => l.Contains("Solution build FAILED") || l.Contains("error CS") || l.Contains("invalid C# syntax"));
+        logLines.Should().NotContain(l => l.Contains("Solution tests SUCCEEDED"));
+        logLines.Should().NotContain(l => l.Contains("All NuGet packages pushed successfully"));
+
         // Staging feed must remain empty
         Directory.GetFiles(stagingFeedDir, "*.nupkg", SearchOption.AllDirectories).Should().BeEmpty();
     }
@@ -240,7 +283,7 @@ public sealed class ReleaseJobsStagingDemonstrationTests : IDisposable
     public async Task Scenario4_TestFailure_halts_pipeline_and_leaves_staging_feed_empty()
     {
         var stagingFeedDir = CreateTempDir("staging-feed-test-fail");
-        var (storage, _, worker, workerService) = await SetupCoordinatorAndWorkerAsync(stagingFeedDir);
+        var (storage, _, worker, workerService, _) = await SetupCoordinatorAndWorkerAsync(stagingFeedDir);
         var (repoDir, commitSha) = await CreateTestRepoAsync("test-fail", stagingFeedDir, failTest: true);
 
         var project = new Project
@@ -289,6 +332,15 @@ public sealed class ReleaseJobsStagingDemonstrationTests : IDisposable
         phases.Should().NotContain(p => p.Name == "worker.inventory.verify");
         phases.Should().NotContain(p => p.Name == "worker.nuget.push");
 
+        // Assert: Logs contain test failure details and no push
+        var logs = await storage.GetLogsAsync(job.Id);
+        var logLines = logs.Select(l => l.Line).ToList();
+        logLines.Should().NotBeEmpty();
+        logLines.Should().Contain(l => l.Contains("Solution build SUCCEEDED"));
+        logLines.Should().Contain(l => l.Contains("Solution tests FAILED") || l.Contains("Simulated test failure") || l.Contains("Failed"));
+        logLines.Should().NotContain(l => l.Contains("Package inventory verified"));
+        logLines.Should().NotContain(l => l.Contains("All NuGet packages pushed successfully"));
+
         // Staging feed must remain empty
         Directory.GetFiles(stagingFeedDir, "*.nupkg", SearchOption.AllDirectories).Should().BeEmpty();
     }
@@ -297,7 +349,7 @@ public sealed class ReleaseJobsStagingDemonstrationTests : IDisposable
     public async Task Scenario5_InventoryDiscrepancy_halts_before_push_and_leaves_staging_feed_empty()
     {
         var stagingFeedDir = CreateTempDir("staging-feed-inv-disc");
-        var (storage, _, worker, workerService) = await SetupCoordinatorAndWorkerAsync(stagingFeedDir);
+        var (storage, _, worker, workerService, _) = await SetupCoordinatorAndWorkerAsync(stagingFeedDir);
         var (repoDir, commitSha) = await CreateTestRepoAsync("inv-disc", stagingFeedDir, version: "1.0.0", tag: "v1.0.0");
 
         // Project requires DemoLib AND ExtraLib, but repo only produces DemoLib
@@ -341,6 +393,15 @@ public sealed class ReleaseJobsStagingDemonstrationTests : IDisposable
 
         phases.Should().NotContain(p => p.Name == "worker.nuget.push");
 
+        // Assert: Logs contain inventory discrepancy details and no push
+        var logs = await storage.GetLogsAsync(job.Id);
+        var logLines = logs.Select(l => l.Line).ToList();
+        logLines.Should().NotBeEmpty();
+        logLines.Should().Contain(l => l.Contains("Solution build SUCCEEDED"));
+        logLines.Should().Contain(l => l.Contains("Solution tests SUCCEEDED"));
+        logLines.Should().Contain(l => l.Contains("missing: [ExtraLib]"));
+        logLines.Should().NotContain(l => l.Contains("All NuGet packages pushed successfully"));
+
         // Staging feed must remain empty
         Directory.GetFiles(stagingFeedDir, "*.nupkg", SearchOption.AllDirectories).Should().BeEmpty();
     }
@@ -349,7 +410,7 @@ public sealed class ReleaseJobsStagingDemonstrationTests : IDisposable
     public async Task Scenario6_Duplicate409Conflict_with_different_bytes_fails_closed_without_overwriting()
     {
         var stagingFeedDir = CreateTempDir("staging-feed-409");
-        var (storage, _, worker, workerService) = await SetupCoordinatorAndWorkerAsync(stagingFeedDir);
+        var (storage, _, worker, workerService, _) = await SetupCoordinatorAndWorkerAsync(stagingFeedDir);
         var (repoDir, commitSha) = await CreateTestRepoAsync("conflict-409", stagingFeedDir, version: "1.0.0", tag: "v1.0.0");
 
         // Pre-seed feed with a package having the same name but DIFFERENT byte content
@@ -396,6 +457,13 @@ public sealed class ReleaseJobsStagingDemonstrationTests : IDisposable
         pushPhase.Should().NotBeNull();
         pushPhase!.Status.Should().Be(PhaseStatus.Fail);
 
+        // Assert: Logs show conflict details
+        var logs = await storage.GetLogsAsync(job.Id);
+        var logLines = logs.Select(l => l.Line).ToList();
+        logLines.Should().NotBeEmpty();
+        logLines.Should().Contain(l => l.Contains("already exists in feed") && l.Contains("with different contents"));
+        logLines.Should().NotContain(l => l.Contains("All NuGet packages pushed successfully"));
+
         // Assert: Staging feed file was NOT overwritten and preserves initial conflicting bytes
         File.Exists(existingPkgPath).Should().BeTrue();
         var currentBytes = await File.ReadAllBytesAsync(existingPkgPath);
@@ -404,16 +472,16 @@ public sealed class ReleaseJobsStagingDemonstrationTests : IDisposable
     }
 
     [Fact]
-    public async Task Scenario7_Cancellation_aborts_pipeline_and_leaves_staging_feed_empty()
+    public async Task Scenario7_UserCancellation_via_coordinator_aborts_pipeline_and_marks_job_cancelled()
     {
-        var stagingFeedDir = CreateTempDir("staging-feed-cancel");
-        var (storage, _, worker, workerService) = await SetupCoordinatorAndWorkerAsync(stagingFeedDir);
-        var (repoDir, commitSha) = await CreateTestRepoAsync("cancel", stagingFeedDir, version: "1.0.0", tag: "v1.0.0");
+        var stagingFeedDir = CreateTempDir("staging-feed-user-cancel");
+        var (storage, _, worker, workerService, jobSource) = await SetupCoordinatorAndWorkerAsync(stagingFeedDir);
+        var (repoDir, commitSha) = await CreateTestRepoAsync("user-cancel", stagingFeedDir, version: "1.0.0", tag: "v1.0.0");
 
         var project = new Project
         {
             Id = Guid.NewGuid(),
-            Name = "CancelProject",
+            Name = "UserCancelProject",
             GitUrl = repoDir,
             Branch = "main",
             RunTestsBeforeDeploy = true,
@@ -433,16 +501,160 @@ public sealed class ReleaseJobsStagingDemonstrationTests : IDisposable
         };
         await storage.AddJobAsync(job);
 
-        using var cts = new CancellationTokenSource();
-        cts.CancelAfter(300);
+        // When the build phase begins, simulate the coordinator recording a user cancellation request
+        jobSource.OnPhaseEvent = (jobId, ev) =>
+        {
+            if (ev.Name == "worker.solution.build" && ev.Kind == PhaseEventKind.Start)
+            {
+                var j = storage.GetJobAsync(jobId, CancellationToken.None).GetAwaiter().GetResult();
+                if (j is not null && j.CancellationRequestedAt is null)
+                {
+                    j.CancellationRequestedAt = DateTimeOffset.UtcNow;
+                    storage.UpdateJobAsync(j, CancellationToken.None).GetAwaiter().GetResult();
+                }
+            }
+        };
 
-        // Act & Assert: Cancellation aborts the pipeline with OperationCanceledException
-        var act = async () => await workerService.ExecuteJobAsync(job, cts.Token);
+        // Act: Worker executes the job; monitor detects cancellation and aborts cleanly
+        await workerService.ExecuteJobAsync(job, CancellationToken.None);
+
+        // Assert: Job status in storage is Cancelled
+        var finishedJob = await storage.GetJobAsync(job.Id);
+        finishedJob.Should().NotBeNull();
+        finishedJob!.Status.Should().Be(JobStatus.Cancelled);
+        finishedJob.ErrorMessage.Should().Contain("Cancelled by user");
+
+        // Assert: Subsequent packaging and publishing phases never ran
+        var phases = await storage.GetJobPhasesAsync(job.Id);
+        phases.Should().NotContain(p => p.Name == "worker.deployer.pack");
+        phases.Should().NotContain(p => p.Name == "worker.inventory.verify");
+        phases.Should().NotContain(p => p.Name == "worker.nuget.push");
+
+        // Assert: Logs show explicit cancellation message
+        var logs = await storage.GetLogsAsync(job.Id);
+        var logLines = logs.Select(l => l.Line).ToList();
+        logLines.Should().NotBeEmpty();
+        logLines.Should().Contain(l => l.Contains("=== Deployment CANCELLED by user ==="));
+        logLines.Should().NotContain(l => l.Contains("All NuGet packages pushed successfully"));
+
+        // Staging feed must remain empty
+        Directory.GetFiles(stagingFeedDir, "*.nupkg", SearchOption.AllDirectories).Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task Scenario8_HostShutdown_propagates_cancellation_without_marking_false_terminal_state()
+    {
+        var stagingFeedDir = CreateTempDir("staging-feed-host-shutdown");
+        var (storage, _, worker, workerService, _) = await SetupCoordinatorAndWorkerAsync(stagingFeedDir);
+        var (repoDir, commitSha) = await CreateTestRepoAsync("host-shutdown", stagingFeedDir, version: "1.0.0", tag: "v1.0.0");
+
+        var project = new Project
+        {
+            Id = Guid.NewGuid(),
+            Name = "HostShutdownProject",
+            GitUrl = repoDir,
+            Branch = "main",
+            RunTestsBeforeDeploy = true,
+            ExpectedPackageIds = ["DemoLib"]
+        };
+        await storage.AddProjectAsync(project);
+
+        var job = new DeploymentJob
+        {
+            Id = Guid.NewGuid(),
+            ProjectId = project.Id,
+            Kind = JobKind.Deploy,
+            TriggerCommitSha = commitSha,
+            Status = JobStatus.Assigned,
+            WorkerId = worker.Id,
+            EnqueuedAt = DateTimeOffset.UtcNow
+        };
+        await storage.AddJobAsync(job);
+
+        using var hostCts = new CancellationTokenSource();
+        // Cancel the host token after 200ms while the job is executing
+        hostCts.CancelAfter(200);
+
+        // Act & Assert: Host cancellation propagates OperationCanceledException
+        var act = async () => await workerService.ExecuteJobAsync(job, hostCts.Token);
         await act.Should().ThrowAsync<OperationCanceledException>();
 
-        // Push was never invoked
+        // Assert: Job was NOT marked with a terminal Succeeded or Cancelled state by host shutdown
+        var unfinishedJob = await storage.GetJobAsync(job.Id);
+        unfinishedJob.Should().NotBeNull();
+        unfinishedJob!.Status.Should().NotBe(JobStatus.Succeeded);
+        unfinishedJob.Status.Should().NotBe(JobStatus.Cancelled);
+
+        // Assert: Publishing was never invoked and staging feed is empty
         var phases = await storage.GetJobPhasesAsync(job.Id);
         phases.Should().NotContain(p => p.Name == "worker.nuget.push");
+
+        var logs = await storage.GetLogsAsync(job.Id);
+        var logLines = logs.Select(l => l.Line).ToList();
+        logLines.Should().NotContain(l => l.Contains("All NuGet packages pushed successfully"));
+
+        Directory.GetFiles(stagingFeedDir, "*.nupkg", SearchOption.AllDirectories).Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task Scenario9_InfrastructureFailure_unresolvable_commit_sha_fails_closed_before_build()
+    {
+        var stagingFeedDir = CreateTempDir("staging-feed-infra-fail");
+        var (storage, _, worker, workerService, _) = await SetupCoordinatorAndWorkerAsync(stagingFeedDir);
+        var (repoDir, _) = await CreateTestRepoAsync("infra-fail", stagingFeedDir, version: "1.0.0", tag: "v1.0.0");
+
+        var project = new Project
+        {
+            Id = Guid.NewGuid(),
+            Name = "InfraFailProject",
+            GitUrl = repoDir,
+            Branch = "main",
+            RunTestsBeforeDeploy = true,
+            ExpectedPackageIds = ["DemoLib"]
+        };
+        await storage.AddProjectAsync(project);
+
+        const string nonExistentSha = "0000000000000000000000000000000000000000";
+        var job = new DeploymentJob
+        {
+            Id = Guid.NewGuid(),
+            ProjectId = project.Id,
+            Kind = JobKind.Deploy,
+            TriggerCommitSha = nonExistentSha,
+            Status = JobStatus.Assigned,
+            WorkerId = worker.Id,
+            EnqueuedAt = DateTimeOffset.UtcNow
+        };
+        await storage.AddJobAsync(job);
+
+        // Act: Worker attempts to execute job with invalid commit SHA
+        await workerService.ExecuteJobAsync(job, CancellationToken.None);
+
+        // Assert: Job failed at infrastructure / git checkout
+        var finishedJob = await storage.GetJobAsync(job.Id);
+        finishedJob.Should().NotBeNull();
+        finishedJob!.Status.Should().Be(JobStatus.Failed);
+        finishedJob.ErrorMessage.Should().NotBeNullOrWhiteSpace();
+
+        // Assert: git phase failed, and NO downstream phases ever started
+        var phases = await storage.GetJobPhasesAsync(job.Id);
+        var gitPhase = phases.FirstOrDefault(p => p.Name == "worker.git.clone");
+        gitPhase.Should().NotBeNull();
+        gitPhase!.Status.Should().Be(PhaseStatus.Fail);
+
+        phases.Should().NotContain(p => p.Name == "worker.solution.build");
+        phases.Should().NotContain(p => p.Name == "worker.solution.test");
+        phases.Should().NotContain(p => p.Name == "worker.deployer.pack");
+        phases.Should().NotContain(p => p.Name == "worker.inventory.verify");
+        phases.Should().NotContain(p => p.Name == "worker.nuget.push");
+
+        // Assert: Logs contain git checkout error details and NO push
+        var logs = await storage.GetLogsAsync(job.Id);
+        var logLines = logs.Select(l => l.Line).ToList();
+        logLines.Should().NotBeEmpty();
+        logLines.Should().Contain(l => l.Contains(nonExistentSha) || l.Contains("git") || l.Contains("fatal") || l.Contains("Failed"));
+        logLines.Should().NotContain(l => l.Contains("Solution build SUCCEEDED"));
+        logLines.Should().NotContain(l => l.Contains("All NuGet packages pushed successfully"));
 
         // Staging feed must remain empty
         Directory.GetFiles(stagingFeedDir, "*.nupkg", SearchOption.AllDirectories).Should().BeEmpty();
@@ -458,7 +670,7 @@ public sealed class ReleaseJobsStagingDemonstrationTests : IDisposable
         return path;
     }
 
-    private async Task<(IFleetStorage Storage, PackageArtifactStore ArtifactStore, Worker Worker, RemoteWorkerBackgroundService WorkerService)>
+    private async Task<(IFleetStorage Storage, PackageArtifactStore ArtifactStore, Worker Worker, RemoteWorkerBackgroundService WorkerService, DirectStorageWorkerJobSource JobSource)>
         SetupCoordinatorAndWorkerAsync(string stagingFeedDir)
     {
         var dbPath = Path.Combine(Path.GetTempPath(), $"fleet-staging-{Guid.NewGuid():N}.db");
@@ -484,12 +696,24 @@ public sealed class ReleaseJobsStagingDemonstrationTests : IDisposable
         };
         await storage.AddWorkerAsync(worker);
 
-        // Register push secret in coordinator storage
+        // Register push secrets in coordinator storage (isolated from test processes)
         await storage.AddSecretAsync(new Secret
         {
             Id = Guid.NewGuid(),
             Name = "NUGET_API_KEY",
             Value = "staging-secret-key"
+        });
+        await storage.AddSecretAsync(new Secret
+        {
+            Id = Guid.NewGuid(),
+            Name = "GITHUB_TOKEN",
+            Value = "staging-gh-token"
+        });
+        await storage.AddSecretAsync(new Secret
+        {
+            Id = Guid.NewGuid(),
+            Name = "GH_TOKEN",
+            Value = "staging-gh-token"
         });
 
         var coordinatorClient = new DirectStorageWorkerCoordinatorClient(storage);
@@ -499,7 +723,8 @@ public sealed class ReleaseJobsStagingDemonstrationTests : IDisposable
         var workerOptions = new WorkerOptions
         {
             Id = worker.Id,
-            RepoStoragePath = workerRepoDir
+            RepoStoragePath = workerRepoDir,
+            JobActionPollIntervalSeconds = 0.05
         };
 
         var workerService = new RemoteWorkerBackgroundService(
@@ -508,7 +733,7 @@ public sealed class ReleaseJobsStagingDemonstrationTests : IDisposable
             Options.Create(workerOptions),
             NullLogger<RemoteWorkerBackgroundService>.Instance);
 
-        return (storage, artifactStore, worker, workerService);
+        return (storage, artifactStore, worker, workerService, jobSource);
     }
 
     private async Task<(string RepoDir, string CommitSha)> CreateTestRepoAsync(
@@ -537,6 +762,8 @@ public sealed class ReleaseJobsStagingDemonstrationTests : IDisposable
                 <Nullable>enable</Nullable>
                 <ImplicitUsings>enable</ImplicitUsings>
                 <Version>{version}</Version>
+                <RepositoryType>git</RepositoryType>
+                <RepositoryUrl>{repoDir}</RepositoryUrl>
               </PropertyGroup>
             </Project>
             """);
@@ -552,12 +779,21 @@ public sealed class ReleaseJobsStagingDemonstrationTests : IDisposable
               }
               """
             : $$"""
+              using System;
               using Xunit;
               namespace DemoLibTests;
               public class DemoTest
               {
                   [Fact]
                   public void TestVersion() => Assert.Equal("{{version}}", DemoLib.Class1.Version);
+
+                  [Fact]
+                  public void TestPushSecretsAreNotPresentInTestProcess()
+                  {
+                      Assert.Null(Environment.GetEnvironmentVariable("NUGET_API_KEY"));
+                      Assert.Null(Environment.GetEnvironmentVariable("GITHUB_TOKEN"));
+                      Assert.Null(Environment.GetEnvironmentVariable("GH_TOKEN"));
+                  }
               }
               """;
 
@@ -623,17 +859,28 @@ public sealed class ReleaseJobsStagingDemonstrationTests : IDisposable
                 <Nullable>enable</Nullable>
                 <ImplicitUsings>enable</ImplicitUsings>
                 <Version>{version}</Version>
+                <RepositoryType>git</RepositoryType>
+                <RepositoryUrl>{repoDir}</RepositoryUrl>
               </PropertyGroup>
             </Project>
             """);
 
         await File.WriteAllTextAsync(Path.Combine(testDir, "DemoTest.cs"), $$"""
+            using System;
             using Xunit;
             namespace DemoLibTests;
             public class DemoTest
             {
                 [Fact]
                 public void TestVersion() => Assert.Equal("{{version}}", DemoLib.Class1.Version);
+
+                [Fact]
+                public void TestPushSecretsAreNotPresentInTestProcess()
+                {
+                    Assert.Null(Environment.GetEnvironmentVariable("NUGET_API_KEY"));
+                    Assert.Null(Environment.GetEnvironmentVariable("GITHUB_TOKEN"));
+                    Assert.Null(Environment.GetEnvironmentVariable("GH_TOKEN"));
+                }
             }
             """);
 
@@ -736,6 +983,8 @@ public sealed class ReleaseJobsStagingDemonstrationTests : IDisposable
 
     internal sealed class DirectStorageWorkerJobSource(IFleetStorage storage, PackageArtifactStore artifactStore) : IWorkerJobSource
     {
+        public Action<Guid, PhaseEvent>? OnPhaseEvent { get; set; }
+
         public Task<DeploymentJob?> GetNextJobAsync(Guid workerId, CancellationToken ct = default)
             => storage.GetNextAssignedJobForWorkerAsync(workerId, ct);
 
@@ -771,7 +1020,9 @@ public sealed class ReleaseJobsStagingDemonstrationTests : IDisposable
         {
             var job = await storage.GetJobAsync(jobId, CancellationToken.None)
                 ?? throw new InvalidOperationException($"Job {jobId} not found");
-            job.Status = success ? JobStatus.Succeeded : JobStatus.Failed;
+            job.Status = job.CancellationRequestedAt is not null && !success
+                ? JobStatus.Cancelled
+                : success ? JobStatus.Succeeded : JobStatus.Failed;
             job.FinishedAt = DateTimeOffset.UtcNow;
             job.ErrorMessage = errorMessage;
             await storage.UpdateJobAsync(job, CancellationToken.None);
@@ -782,6 +1033,7 @@ public sealed class ReleaseJobsStagingDemonstrationTests : IDisposable
             try
             {
                 await storage.RecordJobPhaseAsync(jobId, ev, DateTimeOffset.UtcNow, CancellationToken.None);
+                OnPhaseEvent?.Invoke(jobId, ev);
             }
             catch
             {
@@ -793,7 +1045,7 @@ public sealed class ReleaseJobsStagingDemonstrationTests : IDisposable
         {
             var job = await storage.GetJobAsync(jobId, ct);
             if (job is null) return JobAction.Abort;
-            if (job.Status == JobStatus.Cancelled) return JobAction.Cancel;
+            if (job.Status == JobStatus.Cancelled || job.CancellationRequestedAt is not null) return JobAction.Cancel;
             return JobAction.Continue;
         }
     }

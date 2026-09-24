@@ -873,7 +873,25 @@ public class RemoteWorkerBackgroundService : BackgroundService
     {
         try
         {
-            using var timer = new PeriodicTimer(TimeSpan.FromSeconds(3));
+            var initialAction = await jobSource.GetJobActionAsync(jobId, jobCt);
+            if (initialAction == JobAction.Cancel)
+            {
+                logger.LogInformation("Cancellation already requested for job {JobId}", jobId);
+                await cancelCts.CancelAsync();
+                return;
+            }
+            if (initialAction == JobAction.Abort)
+            {
+                logger.LogWarning("Coordinator instructed worker to abort job {JobId}. Releasing slot.", jobId);
+                onAbort();
+                await cancelCts.CancelAsync();
+                return;
+            }
+
+            var interval = options.JobActionPollIntervalSeconds > 0
+                ? TimeSpan.FromSeconds(options.JobActionPollIntervalSeconds)
+                : TimeSpan.FromSeconds(3);
+            using var timer = new PeriodicTimer(interval);
             while (await timer.WaitForNextTickAsync(jobCt))
             {
                 var action = await jobSource.GetJobActionAsync(jobId, jobCt);

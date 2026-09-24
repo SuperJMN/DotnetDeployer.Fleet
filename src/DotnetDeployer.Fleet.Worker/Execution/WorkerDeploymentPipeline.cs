@@ -15,10 +15,12 @@ internal static class WorkerDeploymentPipeline
         Func<CancellationToken, Task<(bool Success, string? Error)>> runDeployer,
         CancellationToken ct = default)
     {
+        ct.ThrowIfCancellationRequested();
         var buildResult = await runSolutionBuild(ct);
         if (!buildResult.Success)
             return buildResult;
 
+        ct.ThrowIfCancellationRequested();
         if (ShouldRunSolutionTests(job, project))
         {
             var testResult = await runSolutionTests(ct);
@@ -26,6 +28,7 @@ internal static class WorkerDeploymentPipeline
                 return testResult;
         }
 
+        ct.ThrowIfCancellationRequested();
         return await runDeployer(ct);
     }
 
@@ -65,10 +68,12 @@ internal static class WorkerDeploymentPipeline
             return (false, "Mixed release deployment rejected: multiple publishing destinations (NuGet push and additional publish) cannot be executed atomically across independent external APIs, risking irreversible partial publication. Configure only a single destination per release pipeline.");
         }
 
+        ct.ThrowIfCancellationRequested();
         var buildResult = await runSolutionBuild(ct);
         if (!buildResult.Success)
             return buildResult;
 
+        ct.ThrowIfCancellationRequested();
         if (ShouldRunSolutionTests(job, project))
         {
             var testResult = await runSolutionTests(ct);
@@ -76,14 +81,17 @@ internal static class WorkerDeploymentPipeline
                 return testResult;
         }
 
+        ct.ThrowIfCancellationRequested();
         var packResult = await runPack(ct);
         if (!packResult.Success)
             return (false, packResult.Error);
 
+        ct.ThrowIfCancellationRequested();
         var verifyResult = await verifyInventory(packResult.ProducedPackagePaths, ct);
         if (!verifyResult.Success)
             return verifyResult;
 
+        ct.ThrowIfCancellationRequested();
         if (runPush is not null)
         {
             var pushResult = await runPush(packResult.ProducedPackagePaths, ct);
@@ -91,6 +99,7 @@ internal static class WorkerDeploymentPipeline
                 return pushResult;
         }
 
+        ct.ThrowIfCancellationRequested();
         if (runAdditionalPublish is not null)
         {
             var additionalResult = await runAdditionalPublish(ct);

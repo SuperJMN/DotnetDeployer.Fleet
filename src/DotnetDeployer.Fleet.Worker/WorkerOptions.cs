@@ -17,6 +17,7 @@ public class WorkerOptions
 
     public int PollIntervalSeconds { get; set; } = 10;
     public int HeartbeatIntervalSeconds { get; set; } = 30;
+    public double JobActionPollIntervalSeconds { get; set; } = 3.0;
     public int HttpTimeoutSeconds { get; set; } = 30;
     public int TokenRefreshSkewSeconds { get; set; } = 60;
 
