@@ -1,3 +1,4 @@
+using System.Text.Json;
 using DotnetDeployer.Fleet.Core.Domain;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
@@ -36,6 +37,11 @@ public class FleetDbContext : DbContext
             e.Property(p => p.RunTestsBeforeDeploy)
                 .HasDefaultValue(true)
                 .HasSentinel(true);
+            e.Property(p => p.ExpectedPackageIds)
+                .HasConversion(
+                    v => JsonSerializer.Serialize(v, (JsonSerializerOptions?)null),
+                    v => JsonSerializer.Deserialize<List<string>>(v, (JsonSerializerOptions?)null) ?? new List<string>())
+                .HasDefaultValueSql("'[]'");
         });
 
         modelBuilder.Entity<DeploymentJob>(e =>

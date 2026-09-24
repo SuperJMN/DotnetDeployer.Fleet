@@ -11,6 +11,7 @@ public class PackageBuildRequest
     };
 
     public string? PackageProject { get; set; }
+    public string? CommitSha { get; set; }
     public List<PackageBuildTarget> Targets { get; set; } = [];
 
     public static string Serialize(PackageBuildRequest request) =>

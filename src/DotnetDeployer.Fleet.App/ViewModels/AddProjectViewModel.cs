@@ -14,6 +14,7 @@ public partial class AddProjectViewModel : ReactiveObject
     [Reactive] private string _pollingInterval = "0";
     [Reactive] private string _gitToken = string.Empty;
     [Reactive] private bool _runTestsBeforeDeploy = true;
+    [Reactive] private string _expectedPackageIdsText = string.Empty;
     [Reactive] private string? _error;
     [Reactive] private bool _isBusy;
 
@@ -42,7 +43,12 @@ public partial class AddProjectViewModel : ReactiveObject
 
             int polling = int.TryParse(PollingInterval, out var p) ? p : 0;
             var token = string.IsNullOrWhiteSpace(GitToken) ? null : GitToken;
-            await _client.CreateProjectAsync(Name, GitUrl, Branch, polling, token, RunTestsBeforeDeploy);
+            var packageIds = ExpectedPackageIdsText
+                .Split(['\r', '\n', ',', ';'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToList();
+
+            await _client.CreateProjectAsync(Name, GitUrl, Branch, polling, token, RunTestsBeforeDeploy, packageIds);
             return true;
         }
         catch (Exception ex)

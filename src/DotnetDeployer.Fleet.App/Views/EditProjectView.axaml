@@ -40,6 +40,13 @@
                       IsEnabled="{Binding !IsBusy}" />
 
             <StackPanel Spacing="4">
+                <TextBlock Text="Expected NuGet package IDs (comma or line separated)" Opacity="0.7" FontSize="12" TextWrapping="Wrap" />
+                <TextBox Text="{Binding ExpectedPackageIdsText}"
+                         PlaceholderText="e.g. MyPackage, MyPackage.Core"
+                         IsEnabled="{Binding !IsBusy}" />
+            </StackPanel>
+
+            <StackPanel Spacing="4">
                 <TextBlock Text="Access token (optional, for private HTTPS repos)" Opacity="0.7" FontSize="12" TextWrapping="Wrap" />
                 <FlexPanel Wrap="Wrap" Gap="8" AlignItems="Center">
                     <TextBox Text="{Binding GitToken}"

@@ -21,6 +21,7 @@ public partial class EditProjectViewModel : ReactiveObject
     [Reactive] private string _pollingInterval;
     [Reactive] private string _gitToken;
     [Reactive] private bool _runTestsBeforeDeploy;
+    [Reactive] private string _expectedPackageIdsText;
     [Reactive] private string? _error;
     [Reactive] private bool _isBusy;
 
@@ -38,6 +39,7 @@ public partial class EditProjectViewModel : ReactiveObject
         _originalToken = project.GitToken ?? string.Empty;
         _gitToken = _originalToken;
         _runTestsBeforeDeploy = project.RunTestsBeforeDeploy;
+        _expectedPackageIdsText = string.Join(", ", project.ExpectedPackageIds);
 
         var canSave = this.WhenAnyValue(
             x => x.Name, x => x.GitUrl, x => x.Branch,
@@ -69,6 +71,11 @@ public partial class EditProjectViewModel : ReactiveObject
             // Only send a value when the user actually changed it, to avoid surprises.
             string? tokenToSend = GitToken == _originalToken ? null : GitToken;
 
+            var packageIds = ExpectedPackageIdsText
+                .Split(['\r', '\n', ',', ';'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToList();
+
             await _client.UpdateProjectAsync(
                 _project.Id,
                 name: Name,
@@ -76,7 +83,8 @@ public partial class EditProjectViewModel : ReactiveObject
                 branch: Branch,
                 pollingIntervalMinutes: polling,
                 gitToken: tokenToSend,
-                runTestsBeforeDeploy: RunTestsBeforeDeploy);
+                runTestsBeforeDeploy: RunTestsBeforeDeploy,
+                expectedPackageIds: packageIds);
 
             _projects?.RefreshCommand.Execute(Unit.Default).Subscribe();
             await _navigator.GoBack();

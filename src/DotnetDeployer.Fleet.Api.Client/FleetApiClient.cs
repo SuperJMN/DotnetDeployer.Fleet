@@ -169,10 +169,11 @@ public class FleetApiClient
         string branch,
         int pollingIntervalMinutes = 0,
         string? gitToken = null,
-        bool? runTestsBeforeDeploy = null)
+        bool? runTestsBeforeDeploy = null,
+        IEnumerable<string>? expectedPackageIds = null)
     {
         var response = await http.PostAsJsonAsync("/api/projects",
-            new { name, gitUrl, branch, pollingIntervalMinutes, gitToken, runTestsBeforeDeploy }, JsonOptions);
+            new { name, gitUrl, branch, pollingIntervalMinutes, gitToken, runTestsBeforeDeploy, expectedPackageIds }, JsonOptions);
         response.EnsureSuccessStatusCode();
         return (await response.Content.ReadFromJsonAsync<Project>(JsonOptions))!;
     }
@@ -184,10 +185,11 @@ public class FleetApiClient
         string? branch = null,
         int? pollingIntervalMinutes = null,
         string? gitToken = null,
-        bool? runTestsBeforeDeploy = null)
+        bool? runTestsBeforeDeploy = null,
+        IEnumerable<string>? expectedPackageIds = null)
     {
         var response = await http.PutAsJsonAsync($"/api/projects/{id}",
-            new { name, gitUrl, branch, pollingIntervalMinutes, gitToken, runTestsBeforeDeploy }, JsonOptions);
+            new { name, gitUrl, branch, pollingIntervalMinutes, gitToken, runTestsBeforeDeploy, expectedPackageIds }, JsonOptions);
         response.EnsureSuccessStatusCode();
     }
 
@@ -197,9 +199,9 @@ public class FleetApiClient
         response.EnsureSuccessStatusCode();
     }
 
-    public async Task<DeploymentJob> EnqueueDeployAsync(Guid projectId)
+    public async Task<DeploymentJob> EnqueueDeployAsync(Guid projectId, string? commitSha = null)
     {
-        var response = await http.PostAsync($"/api/projects/{projectId}/deploy", null);
+        var response = await http.PostAsJsonAsync($"/api/projects/{projectId}/deploy", new { commitSha }, JsonOptions);
         response.EnsureSuccessStatusCode();
         return (await response.Content.ReadFromJsonAsync<DeploymentJob>(JsonOptions))!;
     }

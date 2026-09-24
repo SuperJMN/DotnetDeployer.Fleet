@@ -101,6 +101,7 @@ public static class CoordinatorHostBuilder
                 builder.Configuration["ProjectIcons:RootDir"] ?? "project-icons",
                 sp.GetRequiredService<ILogger<ProjectIconStore>>()));
         builder.Services.AddSingleton<PackageProjectDiscovery>();
+        builder.Services.AddSingleton<IGitCommitResolver, GitCommitResolver>();
         builder.Services.AddSingleton<Endpoints.WorkerLivenessFilter>();
         builder.Services.AddSingleton<JobAssignmentSignal>();
         builder.Services.AddSingleton<IDurationEstimator, EwmaDurationEstimator>();
@@ -177,6 +178,7 @@ public static class CoordinatorHostBuilder
         }
 
         await EnsureRunTestsBeforeDeployColumnAsync(db);
+        await EnsureExpectedPackageIdsColumnAsync(db);
 
         var hasCancellationRequestedAt = (await db.Database
             .SqlQueryRaw<long>("SELECT COUNT(*) AS \"Value\" FROM pragma_table_info('DeploymentJobs') WHERE name='CancellationRequestedAt'")
@@ -323,6 +325,18 @@ public static class CoordinatorHostBuilder
         {
             await db.Database.ExecuteSqlRawAsync(
                 "ALTER TABLE \"Projects\" ADD COLUMN \"RunTestsBeforeDeploy\" INTEGER NOT NULL DEFAULT 1");
+        }
+    }
+
+    internal static async Task EnsureExpectedPackageIdsColumnAsync(FleetDbContext db)
+    {
+        var exists = (await db.Database
+            .SqlQueryRaw<long>("SELECT COUNT(*) AS \"Value\" FROM pragma_table_info('Projects') WHERE name='ExpectedPackageIds'")
+            .ToListAsync()).FirstOrDefault() > 0;
+        if (!exists)
+        {
+            await db.Database.ExecuteSqlRawAsync(
+                "ALTER TABLE \"Projects\" ADD COLUMN \"ExpectedPackageIds\" TEXT NOT NULL DEFAULT '[]'");
         }
     }
 

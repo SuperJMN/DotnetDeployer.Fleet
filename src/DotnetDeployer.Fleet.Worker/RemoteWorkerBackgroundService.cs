@@ -45,6 +45,8 @@ public class RemoteWorkerBackgroundService : BackgroundService
         this.coordinator = coordinator;
         this.options = options.Value;
         this.logger = logger;
+        this.workerId = this.options.Id ?? Guid.NewGuid();
+        this.repoStoragePath = this.options.RepoStoragePath;
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -145,8 +147,11 @@ public class RemoteWorkerBackgroundService : BackgroundService
         }
     }
 
-    private async Task ExecuteJobAsync(DeploymentJob job, CancellationToken ct)
+    internal async Task ExecuteJobAsync(DeploymentJob job, CancellationToken ct)
     {
+        Directory.CreateDirectory(repoStoragePath);
+        RepoStorageIsolator.EnsureBarrierFiles(repoStoragePath);
+
         logger.LogInformation("Starting job {JobId} for project {ProjectId}", job.Id, job.ProjectId);
 
         await using var logBuffer = new LogChunkBuffer(
@@ -221,20 +226,29 @@ public class RemoteWorkerBackgroundService : BackgroundService
             try
             {
                 await Log($"=== DotnetDeployer.Fleet Worker | Job {job.Id} ===");
-                await Log($"Project: {project.Name} | Branch: {branch}");
+                await Log($"Project: {project.Name} | Branch: {branch} | CommitSha: {job.TriggerCommitSha}");
                 await Log($"Git URL: {project.GitUrl}");
+
+                if (string.IsNullOrWhiteSpace(job.TriggerCommitSha))
+                {
+                    var msg = "Release job rejected: TriggerCommitSha is missing or empty. An immutable commit SHA is required.";
+                    await Log($"=== FAILED: {msg} ===");
+                    await logBuffer.FlushAsync();
+                    await jobSource.ReportJobCompletedAsync(job.Id, false, msg, ct);
+                    return;
+                }
 
                 // worker.git.clone — the worker emits its own phases for steps that
                 // happen BEFORE DotnetDeployer is invoked (clone/fetch). DotnetDeployer
                 // emits the rest from inside the build.
                 await EmitPhaseAsync(job.Id, PhaseEventKind.Start, "worker.git.clone",
-                    attrs: new() { ["branch"] = branch }, ct: jobCt);
+                    attrs: new() { ["branch"] = branch, ["targetSha"] = job.TriggerCommitSha }, ct: jobCt);
                 var gitSw = System.Diagnostics.Stopwatch.StartNew();
                 bool gitOk = false;
                 try
                 {
                     await GitHelper.CloneOrFetchAsync(project.GitUrl, branch, localPath,
-                        msg => logBuffer.AppendAsync(msg), jobCt, project.GitToken);
+                        msg => logBuffer.AppendAsync(msg), jobCt, project.GitToken, job.TriggerCommitSha);
                     gitOk = true;
                 }
                 finally
@@ -267,16 +281,115 @@ public class RemoteWorkerBackgroundService : BackgroundService
                 var globalSecrets = await coordinator.GetGlobalSecretsAsync(ct);
                 var projectSecrets = await coordinator.GetProjectSecretsAsync(project.Id, ct);
 
-                var envVars = globalSecrets
+                var allSecrets = globalSecrets
                     .Concat(projectSecrets)
                     .GroupBy(s => s.Name)
-                    .ToDictionary(g => g.Key, g => g.Last().Value);
+                    .ToDictionary(g => g.Key, g => g.Last().Value, StringComparer.OrdinalIgnoreCase);
+
+                var configSummary = DeployerYamlReader.ReadConfig(localPath);
+                var nugetConfig = configSummary.NuGet;
+                var githubConfig = configSummary.GitHub;
+                var githubPagesConfig = configSummary.GitHubPages;
+                var publishSecretNames = configSummary.PublishSecretNames;
+                var signingSecretNames = configSummary.SigningSecretNames;
+
+                // Solution build and test environments must NOT receive publication secrets OR signing secrets
+                var buildScrubKeys = publishSecretNames
+                    .Concat(signingSecretNames)
+                    .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+                var buildEnvVars = allSecrets
+                    .Where(kvp => !buildScrubKeys.Contains(kvp.Key))
+                    .ToDictionary(kvp => kvp.Key, kvp => kvp.Value, StringComparer.OrdinalIgnoreCase);
+
+                // Packaging requires signing secrets (e.g. Android keystore and passwords),
+                // but MUST NOT receive publication/push credentials.
+                var packScrubKeys = publishSecretNames;
+
+                var packEnvVars = allSecrets
+                    .Where(kvp => !packScrubKeys.Contains(kvp.Key))
+                    .ToDictionary(kvp => kvp.Key, kvp => kvp.Value, StringComparer.OrdinalIgnoreCase);
+
+                string? pushApiKey = null;
+                if (!string.IsNullOrWhiteSpace(nugetConfig.ApiKeySecretName) && allSecrets.TryGetValue(nugetConfig.ApiKeySecretName, out var keyFromCustomName))
+                {
+                    pushApiKey = keyFromCustomName;
+                }
+                else if (allSecrets.TryGetValue("NUGET_API_KEY", out var keyFromDefault))
+                {
+                    pushApiKey = keyFromDefault;
+                }
+
+                string? githubToken = null;
+                if (!string.IsNullOrWhiteSpace(githubConfig.TokenSecretName) && allSecrets.TryGetValue(githubConfig.TokenSecretName, out var tokenFromCustomName))
+                {
+                    githubToken = tokenFromCustomName;
+                }
+                else if (allSecrets.TryGetValue("GITHUB_TOKEN", out var tokenFromDefault))
+                {
+                    githubToken = tokenFromDefault;
+                }
+                else if (allSecrets.TryGetValue("GH_TOKEN", out var tokenFromGh))
+                {
+                    githubToken = tokenFromGh;
+                }
+
+                if (job.Kind == JobKind.Deploy && nugetConfig.Enabled && githubConfig.Enabled)
+                {
+                    var msg = "Mixed release deployment rejected: both NuGet and GitHub publishing destinations are enabled in deployer.yaml. Multi-destination deployment cannot be executed atomically across independent external APIs (NuGet and GitHub), risking irreversible partial publication if a destination fails. Configure jobs with a single publishing destination (either NuGet or GitHub), or separate package publishing and GitHub releases into distinct deployment jobs.";
+                    await Log($"=== FAILED: {msg} ===");
+                    await logBuffer.FlushAsync();
+                    await jobSource.ReportJobCompletedAsync(job.Id, false, msg, ct);
+                    return;
+                }
+
+                var isPackageRelease = job.Kind == JobKind.Deploy && (nugetConfig.Enabled || project.ExpectedPackageIds.Count > 0);
+
+                if (isPackageRelease && project.ExpectedPackageIds.Count == 0)
+                {
+                    var msg = "Package release rejected: project.ExpectedPackageIds is empty. Release jobs with NuGet enabled must declare an explicit expected package inventory.";
+                    await Log($"=== FAILED: {msg} ===");
+                    await logBuffer.FlushAsync();
+                    await jobSource.ReportJobCompletedAsync(job.Id, false, msg, ct);
+                    return;
+                }
 
                 var packageOutputDir = job.Kind == JobKind.PackageBuild
                     ? PreparePackageOutputDirectory(job.Id)
                     : null;
 
                 var deployerArguments = BuildDeployerArguments(job, packageOutputDir);
+
+                async Task<(bool Success, string? Error)> RunSolutionBuildAsync(CancellationToken token)
+                {
+                    await Log("=== Running solution build ===");
+                    await EmitPhaseAsync(job.Id, PhaseEventKind.Start, "worker.solution.build", ct: token);
+                    var buildSw = System.Diagnostics.Stopwatch.StartNew();
+                    (bool Success, string? Error) result = (false, null);
+
+                    try
+                    {
+                        result = await SolutionBuildRunner.RunAsync(
+                            localPath,
+                            onLine: line => logBuffer.AppendAsync(line),
+                            envVars: buildEnvVars,
+                            scrubKeys: buildScrubKeys,
+                            ct: token);
+
+                        await Log(result.Success
+                            ? "=== Solution build SUCCEEDED ==="
+                            : $"=== Solution build FAILED: {result.Error} ===");
+                        return result;
+                    }
+                    finally
+                    {
+                        buildSw.Stop();
+                        await EmitPhaseAsync(job.Id, PhaseEventKind.End, "worker.solution.build",
+                            status: result.Success ? PhaseStatus.Ok : PhaseStatus.Fail,
+                            durationMs: buildSw.ElapsedMilliseconds, ct: token);
+                        await logBuffer.FlushAsync();
+                    }
+                }
 
                 async Task<(bool Success, string? Error)> RunSolutionTestsAsync(CancellationToken token)
                 {
@@ -290,7 +403,8 @@ public class RemoteWorkerBackgroundService : BackgroundService
                         result = await SolutionTestRunner.RunAsync(
                             localPath,
                             onLine: line => logBuffer.AppendAsync(line),
-                            envVars: envVars,
+                            envVars: buildEnvVars,
+                            scrubKeys: buildScrubKeys,
                             ct: token);
 
                         await Log(result.Success
@@ -328,8 +442,9 @@ public class RemoteWorkerBackgroundService : BackgroundService
                             localPath,
                             onLine: line => logBuffer.AppendAsync(line),
                             arguments: deployerArguments,
-                            envVars: envVars,
+                            envVars: packEnvVars,
                             onPhase: ev => jobSource.PostJobPhaseAsync(job.Id, ev, token),
+                            scrubKeys: packScrubKeys,
                             ct: token);
                         return result;
                     }
@@ -342,12 +457,298 @@ public class RemoteWorkerBackgroundService : BackgroundService
                     }
                 }
 
-                var (success, error) = await WorkerDeploymentPipeline.RunAsync(
-                    job,
-                    project,
-                    RunSolutionTestsAsync,
-                    RunDeployerAsync,
-                    jobCt);
+                async Task<(bool Success, string? Error)> RunGitHubDeployAsync(CancellationToken token)
+                {
+                    await Log("=== Invoking DotnetDeployer (GitHub deployment) ===");
+                    await EmitPhaseAsync(job.Id, PhaseEventKind.Start, "worker.deployer.github", ct: token);
+                    var ghSw = System.Diagnostics.Stopwatch.StartNew();
+                    (bool Success, string? Error) result = (false, null);
+
+                    string? tempConfigFile = null;
+                    try
+                    {
+                        var deployerArgs = new List<string>(deployerArguments);
+                        if (nugetConfig.Enabled)
+                        {
+                            tempConfigFile = Path.Combine(localPath, $".deployer.no-nuget.{Guid.NewGuid():N}.yaml");
+                            var originalYamlPath = Path.Combine(localPath, "deployer.yaml");
+                            if (!File.Exists(originalYamlPath))
+                                originalYamlPath = Path.Combine(localPath, "deployer.yml");
+
+                            if (File.Exists(originalYamlPath))
+                            {
+                                var content = await File.ReadAllTextAsync(originalYamlPath, token);
+                                var modified = System.Text.RegularExpressions.Regex.Replace(
+                                    content,
+                                    @"(\bnuget:\s*\n(?:\s+.*\n)*?\s+enabled:\s*)true",
+                                    "${1}false",
+                                    System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+                                if (modified == content)
+                                {
+                                    modified = System.Text.RegularExpressions.Regex.Replace(
+                                        content,
+                                        @"(\bnuget:\s*\n)",
+                                        "${1}  enabled: false\n",
+                                        System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+                                }
+                                await File.WriteAllTextAsync(tempConfigFile, modified, token);
+                                deployerArgs.AddRange(["--config", Path.GetFileName(tempConfigFile)]);
+                            }
+                        }
+
+                        var githubPublishEnvVars = new Dictionary<string, string>(packEnvVars, StringComparer.OrdinalIgnoreCase);
+                        if (!string.IsNullOrWhiteSpace(githubToken))
+                        {
+                            githubPublishEnvVars[githubConfig.TokenSecretName ?? "GITHUB_TOKEN"] = githubToken;
+                            githubPublishEnvVars["GITHUB_TOKEN"] = githubToken;
+                        }
+
+                        var githubScrubKeys = publishSecretNames
+                            .Where(k => !string.Equals(k, "GITHUB_TOKEN", StringComparison.OrdinalIgnoreCase)
+                                     && !string.Equals(k, "GH_TOKEN", StringComparison.OrdinalIgnoreCase)
+                                     && !string.Equals(k, githubConfig.TokenSecretName, StringComparison.OrdinalIgnoreCase))
+                            .ToList();
+
+                        result = await DeployerRunner.RunAsync(
+                            localPath,
+                            onLine: line => logBuffer.AppendAsync(line),
+                            arguments: deployerArgs,
+                            envVars: githubPublishEnvVars,
+                            onPhase: ev => jobSource.PostJobPhaseAsync(job.Id, ev, token),
+                            scrubKeys: githubScrubKeys,
+                            ct: token);
+
+                        return result;
+                    }
+                    finally
+                    {
+                        if (tempConfigFile is not null && File.Exists(tempConfigFile))
+                        {
+                            try { File.Delete(tempConfigFile); } catch { }
+                        }
+                        ghSw.Stop();
+                        await EmitPhaseAsync(job.Id, PhaseEventKind.End, "worker.deployer.github",
+                            status: result.Success ? PhaseStatus.Ok : PhaseStatus.Fail,
+                            durationMs: ghSw.ElapsedMilliseconds, ct: token);
+                        await logBuffer.FlushAsync();
+                    }
+                }
+
+                async Task<(bool Success, string? Error, IReadOnlyList<string> ProducedPackagePaths)> RunPackAsync(CancellationToken token)
+                {
+                    await Log("=== Invoking DotnetDeployer (pack phase) ===");
+                    await EmitPhaseAsync(job.Id, PhaseEventKind.Start, "worker.deployer.pack", ct: token);
+                    var packSw = System.Diagnostics.Stopwatch.StartNew();
+                    (bool Success, string? Error, IReadOnlyList<string> ProducedPackagePaths) result = (false, null, []);
+
+                    try
+                    {
+                        var nupkgDir = Path.Combine(localPath, "nupkg");
+                        if (Directory.Exists(nupkgDir))
+                        {
+                            foreach (var existing in Directory.GetFiles(nupkgDir, "*.nupkg"))
+                            {
+                                try { File.Delete(existing); } catch { }
+                            }
+                        }
+
+                        var packArgs = deployerArguments.Concat(["--dry-run"]).ToList();
+                        var deployerResult = await DeployerRunner.RunAsync(
+                            localPath,
+                            onLine: line => logBuffer.AppendAsync(line),
+                            arguments: packArgs,
+                            envVars: packEnvVars,
+                            onPhase: ev => jobSource.PostJobPhaseAsync(job.Id, ev, token),
+                            scrubKeys: packScrubKeys,
+                            ct: token);
+
+                        if (!deployerResult.Success)
+                        {
+                            result = (false, deployerResult.Error, []);
+                            return result;
+                        }
+
+                        var producedFiles = new List<string>();
+                        if (Directory.Exists(nupkgDir))
+                        {
+                            producedFiles.AddRange(Directory.GetFiles(nupkgDir, "*.nupkg"));
+                        }
+                        else
+                        {
+                            var allFound = Directory.GetFiles(localPath, "*.nupkg", SearchOption.AllDirectories)
+                                .Where(p => !p.Contains("/bin/") && !p.Contains("\\bin\\") && !p.Contains("/obj/") && !p.Contains("\\obj\\"))
+                                .ToList();
+                            producedFiles.AddRange(allFound);
+                        }
+
+                        result = (true, null, producedFiles);
+                        return result;
+                    }
+                    finally
+                    {
+                        packSw.Stop();
+                        await EmitPhaseAsync(job.Id, PhaseEventKind.End, "worker.deployer.pack",
+                            status: result.Success ? PhaseStatus.Ok : PhaseStatus.Fail,
+                            durationMs: packSw.ElapsedMilliseconds, ct: token);
+                        await logBuffer.FlushAsync();
+                    }
+                }
+
+                async Task<(bool Success, string? Error)> VerifyInventoryAsync(IReadOnlyList<string> packagePaths, CancellationToken token)
+                {
+                    await Log("=== Verifying package inventory ===");
+                    await EmitPhaseAsync(job.Id, PhaseEventKind.Start, "worker.inventory.verify", ct: token);
+                    var verifySw = System.Diagnostics.Stopwatch.StartNew();
+                    (bool Success, string? Error) result = (false, null);
+
+                    try
+                    {
+                        var producedIds = new List<string>();
+                        foreach (var path in packagePaths)
+                        {
+                            try
+                            {
+                                var packageId = NuGetPackageReader.ReadPackageId(path);
+                                producedIds.Add(packageId);
+                            }
+                            catch (Exception ex)
+                            {
+                                var err = $"Failed to read package ID from '{Path.GetFileName(path)}': {ex.Message}";
+                                await Log($"[inventory] {err}");
+                                result = (false, err);
+                                return result;
+                            }
+                        }
+
+                        await Log($"[inventory] Expected packages ({project.ExpectedPackageIds.Count}): {string.Join(", ", project.ExpectedPackageIds)}");
+                        await Log($"[inventory] Produced packages ({producedIds.Count}): {string.Join(", ", producedIds)}");
+
+                        var validation = PackageInventoryValidator.Validate(project.ExpectedPackageIds, producedIds);
+                        if (!validation.IsValid)
+                        {
+                            if (validation.MissingIds.Count > 0)
+                                await Log($"[inventory] MISSING expected packages: {string.Join(", ", validation.MissingIds)}");
+                            if (validation.ExtraIds.Count > 0)
+                                await Log($"[inventory] UNEXPECTED packages produced: {string.Join(", ", validation.ExtraIds)}");
+                            if (validation.DuplicateIds.Count > 0)
+                                await Log($"[inventory] DUPLICATE packages produced: {string.Join(", ", validation.DuplicateIds)}");
+
+                            result = (false, validation.ErrorMessage);
+                            return result;
+                        }
+
+                        await Log("=== Package inventory verified successfully ===");
+                        result = (true, null);
+                        return result;
+                    }
+                    finally
+                    {
+                        verifySw.Stop();
+                        await EmitPhaseAsync(job.Id, PhaseEventKind.End, "worker.inventory.verify",
+                            status: result.Success ? PhaseStatus.Ok : PhaseStatus.Fail,
+                            durationMs: verifySw.ElapsedMilliseconds, ct: token);
+                        await logBuffer.FlushAsync();
+                    }
+                }
+
+                async Task<(bool Success, string? Error)> RunPushAsync(IReadOnlyList<string> packagePaths, CancellationToken token)
+                {
+                    await Log("=== Pushing NuGet packages ===");
+                    await EmitPhaseAsync(job.Id, PhaseEventKind.Start, "worker.nuget.push",
+                        attrs: new() { ["source"] = nugetConfig.Source }, ct: token);
+                    var pushSw = System.Diagnostics.Stopwatch.StartNew();
+                    (bool Success, string? Error) result = (false, null);
+
+                    try
+                    {
+                        if (string.IsNullOrWhiteSpace(pushApiKey))
+                        {
+                            var err = $"NuGet push secret '{nugetConfig.ApiKeySecretName}' not found in configured secrets.";
+                            await Log($"[nuget.push] FAILED: {err}");
+                            result = (false, err);
+                            return result;
+                        }
+
+                        foreach (var packagePath in packagePaths)
+                        {
+                            await Log($"[nuget.push] Pushing {Path.GetFileName(packagePath)} to {nugetConfig.Source}...");
+                            var pushResult = await NuGetPackagePusher.PushAsync(
+                                localPath,
+                                packagePath,
+                                pushApiKey,
+                                nugetConfig.Source,
+                                line => logBuffer.AppendAsync(line),
+                                token);
+
+                            if (!pushResult.Success)
+                            {
+                                await Log($"[nuget.push] FAILED pushing {Path.GetFileName(packagePath)}: {pushResult.Error}");
+                                result = (false, pushResult.Error);
+                                return result;
+                            }
+
+                            await Log($"[nuget.push] Successfully pushed {Path.GetFileName(packagePath)}");
+                        }
+
+                        await Log("=== All NuGet packages pushed successfully ===");
+                        result = (true, null);
+                        return result;
+                    }
+                    finally
+                    {
+                        pushSw.Stop();
+                        await EmitPhaseAsync(job.Id, PhaseEventKind.End, "worker.nuget.push",
+                            status: result.Success ? PhaseStatus.Ok : PhaseStatus.Fail,
+                            durationMs: pushSw.ElapsedMilliseconds, ct: token);
+                        await logBuffer.FlushAsync();
+                    }
+                }
+
+                bool success;
+                string? error;
+
+                if (isPackageRelease)
+                {
+                    var releaseResult = await WorkerDeploymentPipeline.RunReleasePipelineAsync(
+                        job,
+                        project,
+                        RunSolutionBuildAsync,
+                        RunSolutionTestsAsync,
+                        RunPackAsync,
+                        VerifyInventoryAsync,
+                        nugetConfig.Enabled ? RunPushAsync : null,
+                        githubConfig.Enabled ? RunGitHubDeployAsync : null,
+                        jobCt);
+                    success = releaseResult.Success;
+                    error = releaseResult.Error;
+                }
+                else if (job.Kind == JobKind.Deploy)
+                {
+                    Func<CancellationToken, Task<(bool Success, string? Error)>> deployAction =
+                        githubConfig.Enabled ? RunGitHubDeployAsync : RunDeployerAsync;
+
+                    var standardResult = await WorkerDeploymentPipeline.RunAsync(
+                        job,
+                        project,
+                        RunSolutionBuildAsync,
+                        RunSolutionTestsAsync,
+                        deployAction,
+                        jobCt);
+                    success = standardResult.Success;
+                    error = standardResult.Error;
+                }
+                else
+                {
+                    var packageResult = await WorkerDeploymentPipeline.RunAsync(
+                        job,
+                        project,
+                        RunSolutionBuildAsync,
+                        RunSolutionTestsAsync,
+                        RunDeployerAsync,
+                        jobCt);
+                    success = packageResult.Success;
+                    error = packageResult.Error;
+                }
 
                 await logBuffer.FlushAsync();
 
@@ -455,7 +856,8 @@ public class RemoteWorkerBackgroundService : BackgroundService
     {
         try
         {
-            await jobSource.ReportJobCompletedAsync(jobId, false, error, ct);
+            using var timeoutCts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+            await jobSource.ReportJobCompletedAsync(jobId, false, error, timeoutCts.Token);
         }
         catch (Exception ex)
         {
@@ -471,7 +873,25 @@ public class RemoteWorkerBackgroundService : BackgroundService
     {
         try
         {
-            using var timer = new PeriodicTimer(TimeSpan.FromSeconds(3));
+            var initialAction = await jobSource.GetJobActionAsync(jobId, jobCt);
+            if (initialAction == JobAction.Cancel)
+            {
+                logger.LogInformation("Cancellation already requested for job {JobId}", jobId);
+                await cancelCts.CancelAsync();
+                return;
+            }
+            if (initialAction == JobAction.Abort)
+            {
+                logger.LogWarning("Coordinator instructed worker to abort job {JobId}. Releasing slot.", jobId);
+                onAbort();
+                await cancelCts.CancelAsync();
+                return;
+            }
+
+            var interval = options.JobActionPollIntervalSeconds > 0
+                ? TimeSpan.FromSeconds(options.JobActionPollIntervalSeconds)
+                : TimeSpan.FromSeconds(3);
+            using var timer = new PeriodicTimer(interval);
             while (await timer.WaitForNextTickAsync(jobCt))
             {
                 var action = await jobSource.GetJobActionAsync(jobId, jobCt);
@@ -546,10 +966,11 @@ public class RemoteWorkerBackgroundService : BackgroundService
     {
         try
         {
+            using var timeoutCts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
             await coordinator.UpdateStatusAsync(
                 workerId,
                 busy ? WorkerStatus.Busy : WorkerStatus.Online,
-                ct);
+                timeoutCts.Token);
         }
         catch (Exception ex)
         {
@@ -606,7 +1027,7 @@ public class RemoteWorkerBackgroundService : BackgroundService
     /// coordinator. Telemetry-only — failures are swallowed by
     /// <see cref="IWorkerJobSource.PostJobPhaseAsync"/> and never break the build.
     /// </summary>
-    private Task EmitPhaseAsync(
+    private async Task EmitPhaseAsync(
         Guid jobId,
         PhaseEventKind kind,
         string name,
@@ -623,6 +1044,13 @@ public class RemoteWorkerBackgroundService : BackgroundService
             DurationMs = durationMs,
             Attrs = attrs ?? new Dictionary<string, string>()
         };
-        return jobSource.PostJobPhaseAsync(jobId, ev, ct);
+        try
+        {
+            await jobSource.PostJobPhaseAsync(jobId, ev, ct);
+        }
+        catch (Exception ex)
+        {
+            logger.LogDebug(ex, "Failed to emit phase event {Phase}", name);
+        }
     }
 }
