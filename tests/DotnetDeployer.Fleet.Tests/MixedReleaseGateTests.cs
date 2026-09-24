@@ -163,6 +163,23 @@ public sealed class MixedReleaseGateTests : IDisposable
     }
 
     [Fact]
+    public async Task WorkerDeploymentPipeline_rejects_release_without_a_publication_destination()
+    {
+        var stages = new List<string>();
+        var result = await WorkerDeploymentPipeline.RunReleasePipelineAsync(
+            new DeploymentJob { Kind = JobKind.Deploy },
+            new Project { ExpectedPackageIds = ["DemoLib"] },
+            runSolutionBuild: _ => { stages.Add("build"); return Task.FromResult<(bool, string?)>((true, null)); },
+            runSolutionTests: _ => Task.FromResult<(bool, string?)>((true, null)),
+            runPack: _ => Task.FromResult<(bool, string?, IReadOnlyList<string>)>((true, null, ["pkg.nupkg"])),
+            verifyInventory: (_, _) => Task.FromResult<(bool, string?)>((true, null)));
+
+        result.Success.Should().BeFalse();
+        result.Error.Should().Contain("no enabled publication destination");
+        stages.Should().BeEmpty();
+    }
+
+    [Fact]
     public async Task WorkerDeploymentPipeline_reports_partial_publication_when_github_fails_after_nuget()
     {
         var result = await WorkerDeploymentPipeline.RunReleasePipelineAsync(

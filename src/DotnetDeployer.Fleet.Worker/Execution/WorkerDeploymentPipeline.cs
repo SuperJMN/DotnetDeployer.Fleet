@@ -61,6 +61,9 @@ internal static class WorkerDeploymentPipeline
         CancellationToken ct = default)
     {
         ct.ThrowIfCancellationRequested();
+        if (runPush is null && runAdditionalPublish is null)
+            return (false, "Release has no enabled publication destination; check deployer.yaml before retrying.");
+
         var buildResult = await runSolutionBuild(ct);
         if (!buildResult.Success)
             return buildResult;
