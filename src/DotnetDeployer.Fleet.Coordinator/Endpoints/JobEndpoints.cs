@@ -18,6 +18,7 @@ public static class JobEndpoints
         group.MapGet("/{id:guid}/phases", GetPhases);
         group.MapGet("/{id:guid}/artifacts", GetArtifacts);
         group.MapGet("/{id:guid}/artifacts/{*relativePath}", DownloadArtifact);
+        group.MapGet("/{id:guid}/nuget-release", GetNuGetReleaseForAdmin).RequireAuthorization("Admin");
         group.MapDelete("/finished", DeleteFinishedJobs);
         group.MapPost("/{id:guid}/cancel", CancelJob);
 
@@ -28,6 +29,11 @@ public static class JobEndpoints
         workerGroup.MapPost("/jobs/{id:guid}/logs", AppendLogs).RequireAuthorization("Worker");
         workerGroup.MapPost("/jobs/{id:guid}/phase", AppendPhase).RequireAuthorization("Worker");
         workerGroup.MapPost("/jobs/{id:guid}/artifacts", UploadArtifact).RequireAuthorization("Worker");
+        workerGroup.MapGet("/jobs/{id:guid}/nuget-release/{commitSha}", GetNuGetRelease).RequireAuthorization("Worker");
+        workerGroup.MapPost("/jobs/{id:guid}/nuget-release/{commitSha}/packages/{packageId}", UploadNuGetReleasePackage).RequireAuthorization("Worker");
+        workerGroup.MapGet("/jobs/{id:guid}/nuget-release/{commitSha}/packages/{packageId}", DownloadNuGetReleasePackage).RequireAuthorization("Worker");
+        workerGroup.MapPost("/jobs/{id:guid}/nuget-release/{commitSha}", CreateNuGetRelease).RequireAuthorization("Worker");
+        workerGroup.MapPut("/jobs/{id:guid}/nuget-release/{commitSha}/packages/{packageId}/state", SetNuGetReleasePackageState).RequireAuthorization("Worker");
         workerGroup.MapPost("/jobs/{id:guid}/complete", ReportCompleted).RequireAuthorization("Worker");
         workerGroup.MapGet("/jobs/{id:guid}/should-cancel", ShouldCancel).RequireAuthorization("Worker");
     }
@@ -42,6 +48,15 @@ public static class JobEndpoints
     {
         var job = await storage.GetJobAsync(id);
         return job is null ? Results.NotFound() : Results.Ok(job);
+    }
+
+    private static async Task<IResult> GetNuGetReleaseForAdmin(Guid id, IFleetStorage storage, NuGetReleaseStore releases)
+    {
+        var job = await storage.GetJobAsync(id);
+        if (job is null) return Results.NotFound();
+        if (string.IsNullOrWhiteSpace(job.TriggerCommitSha)) return Results.NotFound();
+        try { return (await releases.GetAsync(job.ProjectId, job.TriggerCommitSha)) is { } snapshot ? Results.Ok(snapshot) : Results.NotFound(); }
+        catch (ArgumentException) { return Results.NotFound(); }
     }
 
     private static async Task<IResult> DeleteFinishedJobs(
@@ -476,6 +491,76 @@ public static class JobEndpoints
         {
             return Results.BadRequest(new { error = ex.Message });
         }
+    }
+
+    private static async Task<DeploymentJob?> OwnedReleaseJob(Guid id, HttpContext context, IFleetStorage storage)
+    {
+        if (!TryGetWorkerId(context, out var workerId)) return null;
+        var job = await storage.GetJobAsync(id);
+        return job is { Kind: JobKind.Deploy, Status: JobStatus.Running } && job.WorkerId == workerId ? job : null;
+    }
+
+    private static async Task<IResult> GetNuGetRelease(Guid id, string commitSha, HttpContext context,
+        IFleetStorage storage, NuGetReleaseStore releases)
+    {
+        var job = await OwnedReleaseJob(id, context, storage);
+        if (job is null) return Results.Forbid();
+        if (!string.Equals(job.TriggerCommitSha, commitSha, StringComparison.OrdinalIgnoreCase)) return Results.BadRequest();
+        try { return (await releases.GetAsync(job.ProjectId, commitSha)) is { } snapshot ? Results.Ok(snapshot) : Results.NotFound(); }
+        catch (ArgumentException) { return Results.BadRequest(); }
+    }
+
+    private static async Task<IResult> UploadNuGetReleasePackage(Guid id, string commitSha, string packageId,
+        HttpContext context, IFleetStorage storage, NuGetReleaseStore releases)
+    {
+        var job = await OwnedReleaseJob(id, context, storage);
+        if (job is null) return Results.Forbid();
+        if (!string.Equals(job.TriggerCommitSha, commitSha, StringComparison.OrdinalIgnoreCase)) return Results.BadRequest();
+        try
+        {
+            await releases.UploadPackageAsync(job.ProjectId, commitSha, packageId, context.Request.Body, context.RequestAborted);
+            return Results.Ok();
+        }
+        catch (ArgumentException ex) { return Results.BadRequest(new { error = ex.Message }); }
+        catch (InvalidOperationException ex) { return Results.Conflict(new { error = ex.Message }); }
+    }
+
+    private static async Task<IResult> DownloadNuGetReleasePackage(Guid id, string commitSha, string packageId,
+        HttpContext context, IFleetStorage storage, NuGetReleaseStore releases)
+    {
+        var job = await OwnedReleaseJob(id, context, storage);
+        if (job is null) return Results.Forbid();
+        if (!string.Equals(job.TriggerCommitSha, commitSha, StringComparison.OrdinalIgnoreCase)) return Results.BadRequest();
+        try { return Results.File(releases.OpenPackage(job.ProjectId, commitSha, packageId), "application/octet-stream"); }
+        catch (FileNotFoundException) { return Results.NotFound(); }
+        catch (DirectoryNotFoundException) { return Results.NotFound(); }
+        catch (ArgumentException) { return Results.BadRequest(); }
+    }
+
+    private static async Task<IResult> CreateNuGetRelease(Guid id, string commitSha, NuGetReleaseManifest manifest,
+        HttpContext context, IFleetStorage storage, NuGetReleaseStore releases)
+    {
+        var job = await OwnedReleaseJob(id, context, storage);
+        if (job is null) return Results.Forbid();
+        if (!string.Equals(job.TriggerCommitSha, commitSha, StringComparison.OrdinalIgnoreCase)
+            || manifest.ProjectId != job.ProjectId || !string.Equals(manifest.CommitSha, commitSha, StringComparison.OrdinalIgnoreCase))
+            return Results.BadRequest();
+        try { return Results.Ok(await releases.CreateAsync(manifest, context.RequestAborted)); }
+        catch (ArgumentException ex) { return Results.BadRequest(new { error = ex.Message }); }
+        catch (InvalidOperationException ex) { return Results.Conflict(new { error = ex.Message }); }
+    }
+
+    private sealed record ReleaseStateRequest(NuGetReleasePackageState State, string? Detail);
+
+    private static async Task<IResult> SetNuGetReleasePackageState(Guid id, string commitSha, string packageId,
+        ReleaseStateRequest request, HttpContext context, IFleetStorage storage, NuGetReleaseStore releases)
+    {
+        var job = await OwnedReleaseJob(id, context, storage);
+        if (job is null) return Results.Forbid();
+        if (!string.Equals(job.TriggerCommitSha, commitSha, StringComparison.OrdinalIgnoreCase)) return Results.BadRequest();
+        try { return Results.Ok(await releases.SetStateAsync(job.ProjectId, commitSha, packageId, request.State, request.Detail, context.RequestAborted)); }
+        catch (ArgumentException ex) { return Results.BadRequest(new { error = ex.Message }); }
+        catch (InvalidOperationException ex) { return Results.Conflict(new { error = ex.Message }); }
     }
 
     private static async Task<IResult> GetArtifacts(

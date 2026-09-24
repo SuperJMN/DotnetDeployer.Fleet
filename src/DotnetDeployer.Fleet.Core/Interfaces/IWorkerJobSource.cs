@@ -12,6 +12,11 @@ public interface IWorkerJobSource
     Task ReportJobStartedAsync(Guid jobId, Guid workerId, CancellationToken ct = default);
     Task SendLogChunkAsync(Guid jobId, IEnumerable<string> lines, CancellationToken ct = default);
     Task UploadArtifactAsync(Guid jobId, string relativePath, Stream content, CancellationToken ct = default);
+    Task<NuGetReleaseSnapshot?> GetNuGetReleaseAsync(Guid jobId, string commitSha, CancellationToken ct = default);
+    Task UploadNuGetReleasePackageAsync(Guid jobId, string commitSha, string packageId, Stream content, CancellationToken ct = default);
+    Task<Stream> DownloadNuGetReleasePackageAsync(Guid jobId, string commitSha, string packageId, CancellationToken ct = default);
+    Task<NuGetReleaseSnapshot> CreateNuGetReleaseAsync(Guid jobId, NuGetReleaseManifest manifest, CancellationToken ct = default);
+    Task<NuGetReleaseSnapshot> SetNuGetReleasePackageStateAsync(Guid jobId, string commitSha, string packageId, NuGetReleasePackageState state, string? detail, CancellationToken ct = default);
     Task ReportJobCompletedAsync(Guid jobId, bool success, string? errorMessage, CancellationToken ct = default);
 
     /// <summary>

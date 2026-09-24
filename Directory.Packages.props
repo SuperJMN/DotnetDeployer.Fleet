@@ -57,6 +57,7 @@
     <!-- mDNS service discovery -->
     <PackageVersion Include="Makaretu.Dns.Multicast.New" Version="0.38.0" />
     <PackageVersion Include="YamlDotNet" Version="16.3.0" />
+    <PackageVersion Include="NuGet.Packaging" Version="7.9.0" />
     <!-- Testing -->
     <PackageVersion Include="Microsoft.NET.Test.Sdk" Version="18.3.0" />
     <PackageVersion Include="xunit" Version="2.9.0" />

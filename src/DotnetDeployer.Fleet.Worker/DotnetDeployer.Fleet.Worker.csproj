@@ -17,6 +17,7 @@
     <PackageReference Include="Serilog.Sinks.File" />
     <PackageReference Include="Serilog.Settings.Configuration" />
     <PackageReference Include="YamlDotNet" />
+    <PackageReference Include="NuGet.Packaging" />
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="..\DotnetDeployer.Fleet.Core\DotnetDeployer.Fleet.Core.csproj" />

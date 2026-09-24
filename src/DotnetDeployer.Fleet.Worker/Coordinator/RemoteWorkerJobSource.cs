@@ -59,6 +59,59 @@ public class RemoteWorkerJobSource : IWorkerJobSource
         resp.EnsureSuccessStatusCode();
     }
 
+    public async Task<NuGetReleaseSnapshot?> GetNuGetReleaseAsync(Guid jobId, string commitSha, CancellationToken ct = default)
+    {
+        using var response = await http.GetAsync($"/api/queue/jobs/{jobId}/nuget-release/{commitSha}", ct);
+        if (response.StatusCode == System.Net.HttpStatusCode.NotFound) return null;
+        response.EnsureSuccessStatusCode();
+        return await response.Content.ReadFromJsonAsync<NuGetReleaseSnapshot>(ct);
+    }
+
+    public async Task UploadNuGetReleasePackageAsync(Guid jobId, string commitSha, string packageId, Stream content, CancellationToken ct = default)
+    {
+        using var response = await http.PostAsync($"/api/queue/jobs/{jobId}/nuget-release/{commitSha}/packages/{Uri.EscapeDataString(packageId)}",
+            new StreamContent(content), ct);
+        response.EnsureSuccessStatusCode();
+    }
+
+    public async Task<Stream> DownloadNuGetReleasePackageAsync(Guid jobId, string commitSha, string packageId, CancellationToken ct = default)
+    {
+        using var response = await http.GetAsync($"/api/queue/jobs/{jobId}/nuget-release/{commitSha}/packages/{Uri.EscapeDataString(packageId)}",
+            HttpCompletionOption.ResponseHeadersRead, ct);
+        response.EnsureSuccessStatusCode();
+        var tempPath = Path.Combine(Path.GetTempPath(), "fleet-staged-" + Guid.NewGuid().ToString("N") + ".nupkg");
+        var file = new FileStream(tempPath, FileMode.CreateNew, FileAccess.ReadWrite, FileShare.None,
+            bufferSize: 81920, options: FileOptions.DeleteOnClose);
+        try
+        {
+            await response.Content.CopyToAsync(file, ct);
+            file.Position = 0;
+            return file;
+        }
+        catch
+        {
+            await file.DisposeAsync();
+            throw;
+        }
+    }
+
+    public async Task<NuGetReleaseSnapshot> CreateNuGetReleaseAsync(Guid jobId, NuGetReleaseManifest manifest, CancellationToken ct = default)
+    {
+        using var response = await http.PostAsJsonAsync($"/api/queue/jobs/{jobId}/nuget-release/{manifest.CommitSha}", manifest, ct);
+        response.EnsureSuccessStatusCode();
+        return (await response.Content.ReadFromJsonAsync<NuGetReleaseSnapshot>(ct))!;
+    }
+
+    public async Task<NuGetReleaseSnapshot> SetNuGetReleasePackageStateAsync(Guid jobId, string commitSha, string packageId,
+        NuGetReleasePackageState state, string? detail, CancellationToken ct = default)
+    {
+        using var response = await http.PutAsJsonAsync(
+            $"/api/queue/jobs/{jobId}/nuget-release/{commitSha}/packages/{Uri.EscapeDataString(packageId)}/state",
+            new { state, detail }, ct);
+        response.EnsureSuccessStatusCode();
+        return (await response.Content.ReadFromJsonAsync<NuGetReleaseSnapshot>(ct))!;
+    }
+
     public async Task PostJobPhaseAsync(Guid jobId, PhaseEvent ev, CancellationToken ct = default)
     {
         var payload = new
