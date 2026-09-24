@@ -185,8 +185,13 @@ public partial class JobDetailViewModel : ReactiveObject, IHaveHeader, IDisposab
         return name switch
         {
             "worker.git.clone" => "Cloning repository",
+            "worker.solution.build" => "Building solution",
             "worker.solution.test" => "Running solution tests",
             "worker.deployer.invoke" => "Running DotnetDeployer",
+            "worker.deployer.github" => "Publishing GitHub release",
+            "worker.deployer.pack" => "Preparing release packages",
+            "worker.inventory.verify" => "Verifying package inventory",
+            "worker.nuget.push" => "Publishing NuGet packages",
             "worker.artifacts.upload" => "Uploading package artifacts",
             "version.resolve" => "Resolving version",
             "workload.restore" => "Restoring workloads",
