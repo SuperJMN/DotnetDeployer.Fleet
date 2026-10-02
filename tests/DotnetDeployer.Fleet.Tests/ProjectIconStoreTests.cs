@@ -206,6 +206,53 @@ public sealed class ProjectIconStoreTests : IDisposable
         cached.Should().BeNull();
     }
 
+    [Fact]
+    public async Task GetOrResolve_RemembersMissingIconUntilInvalidated()
+    {
+        var repo = Path.Combine(tempDir, $"repo-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(repo);
+        Git(repo, "init", "-b", "main");
+        await File.WriteAllTextAsync(Path.Combine(repo, "README.md"), "no icon yet");
+        Git(repo, "add", ".");
+        Git(repo, "-c", "user.name=Fleet", "-c", "user.email=fleet@example.test", "commit", "-m", "initial");
+        var project = new Project { Id = Guid.NewGuid(), Name = "NoIcon", GitUrl = repo, Branch = "main" };
+        var store = CreateStore();
+
+        (await store.GetOrResolve(project)).Should().BeNull();
+
+        // An icon added later is not picked up by a repeated lookup: the miss is cached, so
+        // listing builds no longer clones the repository on every request.
+        WriteProjectWithPackageIcon(repo, "src/App/App.csproj", "icon.png", [1, 2, 3]);
+        Git(repo, "add", ".");
+        Git(repo, "-c", "user.name=Fleet", "-c", "user.email=fleet@example.test", "commit", "-m", "icon");
+        (await store.GetOrResolve(project)).Should().BeNull();
+
+        // A new commit invalidates the automatic cache (as the poller does).
+        await store.InvalidateAuto(project.Id);
+        var icon = await store.GetOrResolve(project);
+        icon.Should().NotBeNull();
+        icon!.Bytes.Should().Equal(1, 2, 3);
+    }
+
+    private static void Git(string workingDirectory, params string[] args)
+    {
+        var psi = new System.Diagnostics.ProcessStartInfo("git")
+        {
+            WorkingDirectory = workingDirectory,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            UseShellExecute = false
+        };
+        foreach (var arg in args)
+            psi.ArgumentList.Add(arg);
+        using var process = System.Diagnostics.Process.Start(psi)!;
+        process.StandardOutput.ReadToEnd();
+        var stderr = process.StandardError.ReadToEnd();
+        process.WaitForExit();
+        if (process.ExitCode != 0)
+            throw new InvalidOperationException($"git {string.Join(" ", args)} failed: {stderr}");
+    }
+
     public void Dispose()
     {
         try { Directory.Delete(tempDir, recursive: true); } catch { /* best effort */ }
