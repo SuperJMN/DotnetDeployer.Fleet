@@ -42,24 +42,24 @@ internal static class SolutionBuildRunner
         IStreamingProcessRunner processRunner,
         CancellationToken ct = default)
     {
-        string solution;
+        RootSolution solution;
         try
         {
-            solution = SolutionDiscovery.DiscoverRootSolution(workingDirectory);
+            solution = SolutionDiscovery.Discover(workingDirectory);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
             return (false, ex.Message);
         }
 
-        var solutionName = Path.GetFileName(solution);
-        await onLine($"Solution build target: {solutionName}");
+        var solutionName = Path.GetFileName(solution.Path);
+        await onLine($"Solution build target: {solutionName} ({solution.Reason})");
 
         try
         {
             var restore = DeployerRunner.CreateDotnetProcessStartInfo(
                 workingDirectory,
-                ["workload", "restore", solution],
+                ["workload", "restore", solution.Path],
                 envVars,
                 scrubKeys);
 
@@ -83,7 +83,7 @@ internal static class SolutionBuildRunner
         {
             var build = DeployerRunner.CreateDotnetProcessStartInfo(
                 workingDirectory,
-                ["build", solution, "-c", "Release", "--nologo"],
+                ["build", solution.Path, "-c", "Release", "--nologo"],
                 envVars,
                 scrubKeys);
 
