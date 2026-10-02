@@ -31,6 +31,43 @@
             </StackPanel>
         </Border>
 
+        <!-- NuGet verification: published packages are checked after the job succeeds. -->
+        <Border DockPanel.Dock="Top"
+                IsVisible="{Binding IsNuGetVerificationPending}"
+                Background="#1F2A3A"
+                BorderBrush="#3A5A8A"
+                BorderThickness="1"
+                CornerRadius="4"
+                Padding="12"
+                Margin="0,0,0,8">
+            <StackPanel Orientation="Horizontal" Spacing="10">
+                <TextBlock Text="⏳" FontSize="18" VerticalAlignment="Top" />
+                <StackPanel Spacing="2">
+                    <TextBlock Text="NuGet packages published" FontWeight="SemiBold" />
+                    <TextBlock Text="Fleet is verifying that NuGet serves exactly the pushed packages once they are indexed. This can take a few minutes and does not affect the release."
+                               TextWrapping="Wrap" Opacity="0.8" />
+                </StackPanel>
+            </StackPanel>
+        </Border>
+
+        <Border DockPanel.Dock="Top"
+                IsVisible="{Binding IsNuGetVerified}"
+                Background="#1F3A24"
+                BorderBrush="#2E7D32"
+                BorderThickness="1"
+                CornerRadius="4"
+                Padding="12"
+                Margin="0,0,0,8">
+            <StackPanel Orientation="Horizontal" Spacing="10">
+                <TextBlock Text="✅" FontSize="18" VerticalAlignment="Top" />
+                <StackPanel Spacing="2">
+                    <TextBlock Text="NuGet packages verified" FontWeight="SemiBold" Foreground="#81C784" />
+                    <TextBlock Text="Every published package is downloadable and identical to what Fleet pushed."
+                               TextWrapping="Wrap" Opacity="0.8" />
+                </StackPanel>
+            </StackPanel>
+        </Border>
+
         <Border DockPanel.Dock="Top"
                 Background="{DynamicResource SystemControlBackgroundAltHighBrush}"
                 CornerRadius="4"

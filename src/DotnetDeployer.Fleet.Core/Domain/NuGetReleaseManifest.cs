@@ -7,7 +7,9 @@ public enum NuGetReleasePackageState
     Incomplete,
     Complete,
     InterventionRequired,
-    AwaitingIndex
+    AwaitingIndex,
+    /// <summary>The feed accepted the push; the coordinator verifies the downloadable bytes once indexed.</summary>
+    AwaitingVerification
 }
 
 /// <summary>Immutable release intent. Package bytes live in coordinator artifact storage.</summary>

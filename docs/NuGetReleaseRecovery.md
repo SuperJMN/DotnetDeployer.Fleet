@@ -5,7 +5,19 @@ project ID and the full validated Git commit SHA. It records the package version
 exact IDs, SHA-256 of each staged `.nupkg`, NuGet's signature-independent content hash,
 and each durable artifact path. It also pins the push secret name and whether GitHub
 publication follows NuGet. Each package separately records `Prepared`, `Publishing`,
-`AwaitingIndex`, `Incomplete`, `Complete`, or `InterventionRequired`.
+`AwaitingVerification`, `AwaitingIndex`, `Incomplete`, `Complete`, or
+`InterventionRequired`.
+
+## Accepted pushes and background verification
+
+A release succeeds once the feed accepts every push. A package that the feed accepted
+but does not serve yet is `AwaitingVerification`; it is not pushed again. The job
+finishes as succeeded with NuGet verification `Pending`, and GitHub publication runs
+straight away. The coordinator checks those packages every minute without a worker.
+When each one is downloadable with the exact pushed bytes, it becomes `Complete` and the
+job becomes `Verified`. A downloadable package with different bytes becomes
+`InterventionRequired`, and the job becomes failed. A package that is still missing six
+hours after the job finished becomes `Incomplete`, and the job also becomes failed.
 
 ## Deployment prerequisite
 
@@ -24,8 +36,9 @@ per-package progress. Read the job logs and the exact package versions on the fe
 The coordinator also stores the same data under
 `<Releases:RootDir>/<project-id-N>/<commit-sha>/`.
 
-For `AwaitingIndex`, Fleet releases the worker and queues another attempt after four
-minutes. The coordinator persists this decision, so a restart does not lose it. Each
+`AwaitingIndex` is for pushes with an ambiguous outcome, such as a lost response or a
+timeout, after which the package is not downloadable. Fleet releases the worker and
+queues another attempt after four minutes. The coordinator persists this decision, so a restart does not lose it. Each
 attempt verifies the exact remote package before any new push and reuses the stored
 bytes. After twelve failed attempts, Fleet changes the state to `Incomplete` and
 reports that manual recovery is required.
@@ -53,8 +66,7 @@ from backup or an operator has established their exact provenance.
 
 When the manifest requires GitHub publication, the worker fetches the validated source
 after NuGet recovery, then runs that stage. If Git is unavailable, the NuGet packages
-remain verified and a later retry can finish GitHub publication. The GitHub stage starts
-only after every manifest package is verified downloadable. NuGet publication cannot be
-made atomically visible on nuget.org: during
-the sequence, consumers may see a subset. The release remains incomplete until all
-packages are verified.
+remain published and a later retry can finish GitHub publication. The GitHub stage starts
+only after the feed has accepted every manifest package. NuGet publication cannot be
+made atomically visible on nuget.org: during the sequence and while NuGet indexes,
+consumers may see a subset.

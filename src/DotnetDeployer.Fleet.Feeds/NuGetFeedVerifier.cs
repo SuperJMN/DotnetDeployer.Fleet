@@ -4,14 +4,14 @@ using System.Security.Cryptography;
 using System.Text.Json;
 using NuGet.Packaging;
 
-namespace DotnetDeployer.Fleet.WorkerService.Execution;
+namespace DotnetDeployer.Fleet.Feeds;
 
-internal enum FeedPackageStatus { Missing, Equivalent, Conflict }
+public enum FeedPackageStatus { Missing, Equivalent, Conflict }
 
-internal sealed record PackageIdentity(string Id, string Version, string Sha256, string ContentHash);
+public sealed record PackageIdentity(string Id, string Version, string Sha256, string ContentHash);
 
 /// <summary>Checks exact downloadable ID/version bytes. NuGet content hash excludes an added repository signature.</summary>
-internal sealed class NuGetFeedVerifier(HttpClient? client = null)
+public sealed class NuGetFeedVerifier(HttpClient? client = null)
 {
     private readonly HttpClient http = client ?? new HttpClient { Timeout = TimeSpan.FromSeconds(30) };
 

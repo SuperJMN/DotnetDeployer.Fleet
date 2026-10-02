@@ -127,6 +127,12 @@ internal static class NuGetPackagePusher
         return (true, null);
     }
 
+    private const string DuplicateRejectionPrefix = "Conflict: ";
+
+    /// <summary>True when the feed refused the push because it already holds this ID/version.</summary>
+    internal static bool IsDuplicateRejection(string? error) =>
+        error?.StartsWith(DuplicateRejectionPrefix, StringComparison.Ordinal) == true;
+
     internal static string ComputeFileSha256(string filePath)
     {
         using var sha = SHA256.Create();

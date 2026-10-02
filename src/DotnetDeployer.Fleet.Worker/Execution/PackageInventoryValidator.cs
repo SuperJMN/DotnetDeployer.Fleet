@@ -27,18 +27,6 @@ public static class PackageInventoryValidator
             .Select(id => id.Trim())
             .ToList();
 
-        if (expected.Count == 0)
-        {
-            return new PackageInventoryValidationResult(
-                IsValid: false,
-                ExpectedIds: expected,
-                ProducedIds: produced.Distinct(StringComparer.OrdinalIgnoreCase).OrderBy(id => id, StringComparer.OrdinalIgnoreCase).ToList(),
-                MissingIds: [],
-                ExtraIds: produced.Distinct(StringComparer.OrdinalIgnoreCase).OrderBy(id => id, StringComparer.OrdinalIgnoreCase).ToList(),
-                DuplicateIds: [],
-                ErrorMessage: "No expected package inventory policy configured. A package release job requires declared package IDs.");
-        }
-
         // Check duplicates among produced packages
         var duplicates = produced
             .GroupBy(id => id, StringComparer.OrdinalIgnoreCase)
@@ -51,6 +39,26 @@ public static class PackageInventoryValidator
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .OrderBy(id => id, StringComparer.OrdinalIgnoreCase)
             .ToList();
+
+        // Without a pinned inventory every packable project is released; only an empty
+        // or ambiguous pack output is rejected.
+        if (expected.Count == 0)
+        {
+            var error = distinctProduced.Count == 0
+                ? "No NuGet packages were produced. Mark at least one project as packable (IsPackable=true)."
+                : duplicates.Count > 0
+                    ? $"Package inventory mismatch (duplicate: [{string.Join(", ", duplicates)}]). Produced [{string.Join(", ", distinctProduced)}]."
+                    : null;
+
+            return new PackageInventoryValidationResult(
+                IsValid: error is null,
+                ExpectedIds: expected,
+                ProducedIds: distinctProduced,
+                MissingIds: [],
+                ExtraIds: [],
+                DuplicateIds: duplicates,
+                ErrorMessage: error);
+        }
 
         var missing = expected
             .Where(e => !distinctProduced.Contains(e, StringComparer.OrdinalIgnoreCase))

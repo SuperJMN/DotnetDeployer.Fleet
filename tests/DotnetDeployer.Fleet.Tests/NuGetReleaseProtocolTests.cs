@@ -4,6 +4,7 @@ using System.Security.Cryptography;
 using System.Text;
 using DotnetDeployer.Fleet.Coordinator.Services;
 using DotnetDeployer.Fleet.Core.Domain;
+using DotnetDeployer.Fleet.Feeds;
 using DotnetDeployer.Fleet.WorkerService.Execution;
 using DotnetDeployer.Fleet.WorkerService.Coordinator;
 using FluentAssertions;

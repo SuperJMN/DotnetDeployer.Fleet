@@ -280,7 +280,7 @@ public sealed class MixedReleaseGateTests : IDisposable
     }
 
     [Fact]
-    public async Task Worker_requires_inventory_before_mixed_release_publication()
+    public async Task Worker_without_pinned_inventory_still_runs_release_gates_before_publication()
     {
         var dbPath = Path.Combine(CreateTempDir("db"), "fleet.db");
         var options = new DbContextOptionsBuilder<FleetDbContext>()
@@ -363,11 +363,13 @@ public sealed class MixedReleaseGateTests : IDisposable
         // Act
         await workerService.ExecuteJobAsync(job, CancellationToken.None);
 
-        // Assert: Job must be marked Failed
+        // Assert: an unpinned inventory is not a rejection; the repository's own gates
+        // (here, the missing solution) stop the release before anything is published.
         var finishedJob = await storage.GetJobAsync(job.Id);
         finishedJob.Should().NotBeNull();
         finishedJob!.Status.Should().Be(JobStatus.Failed);
-        finishedJob.ErrorMessage.Should().Contain("project.ExpectedPackageIds is empty");
+        finishedJob.ErrorMessage.Should().NotContain("ExpectedPackageIds");
+        finishedJob.ErrorMessage.Should().Contain("solution");
 
         // Assert: No publish phases were recorded
         var phases = await storage.GetJobPhasesAsync(job.Id);
@@ -436,7 +438,7 @@ public sealed class MixedReleaseGateTests : IDisposable
             Name = "NuGetOnlyProject",
             GitUrl = repoDir,
             Branch = "main",
-            ExpectedPackageIds = [] // Will fail on empty expected package inventory, NOT mixed release!
+            ExpectedPackageIds = []
         };
         await storage.AddProjectAsync(project);
 
@@ -455,12 +457,12 @@ public sealed class MixedReleaseGateTests : IDisposable
         // Act
         await workerService.ExecuteJobAsync(job, CancellationToken.None);
 
-        // Assert: Job fails due to empty ExpectedPackageIds gate, NOT mixed release rejection!
+        // Assert: Job fails on the missing solution, NOT on mixed release or inventory rejection.
         var finishedJob = await storage.GetJobAsync(job.Id);
         finishedJob.Should().NotBeNull();
         finishedJob!.Status.Should().Be(JobStatus.Failed);
         finishedJob.ErrorMessage.Should().NotContain("Mixed release deployment rejected");
-        finishedJob.ErrorMessage.Should().Contain("project.ExpectedPackageIds is empty");
+        finishedJob.ErrorMessage.Should().NotContain("ExpectedPackageIds");
     }
 
     [Fact]

@@ -21,6 +21,12 @@ public class DeploymentJob
     public string? ErrorMessage { get; set; }
 
     /// <summary>
+    /// Availability check for the NuGet packages this release pushed. Null when the job
+    /// published nothing to NuGet. A mismatch turns the job into <see cref="JobStatus.Failed"/>.
+    /// </summary>
+    public NuGetVerificationStatus? NuGetVerification { get; set; }
+
+    /// <summary>
     /// JSON payload for <see cref="JobKind.PackageBuild"/> jobs. Stored on the
     /// job so queued work is self-contained even if project settings change later.
     /// </summary>

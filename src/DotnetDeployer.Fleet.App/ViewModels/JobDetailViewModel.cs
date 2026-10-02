@@ -64,6 +64,8 @@ public partial class JobDetailViewModel : ReactiveObject, IHaveHeader, IDisposab
     public string DetailedLogButtonText => IsDetailedLogVisible ? "Hide detailed log" : "Detailed log";
 
     public bool HasError => !string.IsNullOrWhiteSpace(_errorMessage);
+    public bool IsNuGetVerificationPending => Job.Status == JobStatus.Succeeded && Job.NuGetVerification == NuGetVerificationStatus.Pending;
+    public bool IsNuGetVerified => Job.Status == JobStatus.Succeeded && Job.NuGetVerification == NuGetVerificationStatus.Verified;
     public string ElapsedText => JobDurationFormatter.Format(Job.GetElapsedDurationMs(DateTimeOffset.UtcNow));
 
     public ReadOnlyObservableCollection<LogLine> FilteredLogs { get; }
@@ -113,6 +115,14 @@ public partial class JobDetailViewModel : ReactiveObject, IHaveHeader, IDisposab
         Header = _header.AsObservable();
         Observable.Timer(TimeSpan.Zero, TimeSpan.FromSeconds(1), RxSchedulers.MainThreadScheduler)
             .Subscribe(_ => RefreshElapsed())
+            .DisposeWith(disposables);
+        // NuGet verification finishes after the job; pick up its outcome without a manual refresh.
+        Observable.Interval(TimeSpan.FromSeconds(30), RxSchedulers.MainThreadScheduler)
+            .Where(_ => IsNuGetVerificationPending)
+            .SelectMany(_ => Observable.FromAsync(() => _client.GetJobAsync(Job.Id)).Catch(Observable.Return<DeploymentJob?>(null)))
+            .Where(updated => updated is not null)
+            .ObserveOn(RxSchedulers.MainThreadScheduler)
+            .Subscribe(updated => ApplyJobSnapshot(updated!))
             .DisposeWith(disposables);
 
         var minSeverityChanges = this.WhenAnyValue(x => x.MinSeverity);
@@ -374,6 +384,8 @@ public partial class JobDetailViewModel : ReactiveObject, IHaveHeader, IDisposab
 
         this.RaisePropertyChanged(nameof(Job));
         this.RaisePropertyChanged(nameof(HasError));
+        this.RaisePropertyChanged(nameof(IsNuGetVerificationPending));
+        this.RaisePropertyChanged(nameof(IsNuGetVerified));
         this.RaisePropertyChanged(nameof(HasCurrentPhase));
         this.RaisePropertyChanged(nameof(CurrentPhaseDisplay));
         this.RaisePropertyChanged(nameof(ElapsedText));

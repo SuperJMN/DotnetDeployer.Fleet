@@ -6,6 +6,7 @@
     <Project Path="src/DotnetDeployer.Fleet.Tool/DotnetDeployer.Fleet.Tool.csproj" />
     <Project Path="src/DotnetDeployer.Fleet.Coordinator/DotnetDeployer.Fleet.Coordinator.csproj" />
     <Project Path="src/DotnetDeployer.Fleet.Core/DotnetDeployer.Fleet.Core.csproj" />
+    <Project Path="src/DotnetDeployer.Fleet.Feeds/DotnetDeployer.Fleet.Feeds.csproj" />
     <Project Path="src/DotnetDeployer.Fleet.Desktop/DotnetDeployer.Fleet.Desktop.csproj" />
     <Project Path="src/DotnetDeployer.Fleet.Tooling/DotnetDeployer.Fleet.Tooling.csproj" />
     <Project Path="src/DotnetDeployer.Fleet.Worker/DotnetDeployer.Fleet.Worker.csproj" />
