@@ -69,6 +69,7 @@ public class AppendLogsTrackerFailureTests : IDisposable
         public Task<IReadOnlyList<Project>> GetProjectsAsync(CancellationToken ct = default) => inner.GetProjectsAsync(ct);
         public Task<Project?> GetProjectAsync(Guid id, CancellationToken ct = default) => inner.GetProjectAsync(id, ct);
         public Task UpdateProjectAsync(Project project, CancellationToken ct = default) => inner.UpdateProjectAsync(project, ct);
+        public Task RecordProjectPollAsync(Guid projectId, DateTimeOffset polledAt, string? commitSha, CancellationToken ct = default) => inner.RecordProjectPollAsync(projectId, polledAt, commitSha, ct);
         public Task DeleteProjectAsync(Guid id, CancellationToken ct = default) => inner.DeleteProjectAsync(id, ct);
         public Task<IReadOnlyList<DeploymentJob>> GetJobsAsync(CancellationToken ct = default) => inner.GetJobsAsync(ct);
         public Task<IReadOnlyList<DeploymentJob>> GetJobsByProjectAsync(Guid projectId, CancellationToken ct = default) => inner.GetJobsByProjectAsync(projectId, ct);

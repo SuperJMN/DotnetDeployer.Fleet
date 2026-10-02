@@ -75,13 +75,14 @@ public class PollingBackgroundService : BackgroundService
         logger.LogDebug("Polling project {Name} ({Branch})", project.Name, project.Branch);
 
         var latestSha = await commitResolver.ResolveLatestShaAsync(project.GitUrl, project.Branch, project.GitToken, ct);
+        var polledAt = DateTimeOffset.UtcNow;
 
-        project.LastPolledAt = DateTimeOffset.UtcNow;
-
+        // The project was loaded before the (slow) remote lookup. Only the poll columns are
+        // written back, so a concurrent edit made through the API is never overwritten.
         if (latestSha is null)
         {
             logger.LogWarning("Could not resolve SHA for {Name}/{Branch}", project.Name, project.Branch);
-            await storage.UpdateProjectAsync(project);
+            await storage.RecordProjectPollAsync(project.Id, polledAt, null, ct);
             return;
         }
 
@@ -89,14 +90,13 @@ public class PollingBackgroundService : BackgroundService
         if (project.LastPolledCommitSha is null)
         {
             logger.LogInformation("First poll for {Name}/{Branch}: recording baseline SHA {Sha}", project.Name, project.Branch, latestSha);
-            project.LastPolledCommitSha = latestSha;
-            await storage.UpdateProjectAsync(project);
+            await storage.RecordProjectPollAsync(project.Id, polledAt, latestSha, ct);
             return;
         }
 
         if (latestSha == project.LastPolledCommitSha)
         {
-            await storage.UpdateProjectAsync(project);
+            await storage.RecordProjectPollAsync(project.Id, polledAt, null, ct);
             return;
         }
 
@@ -109,11 +109,10 @@ public class PollingBackgroundService : BackgroundService
             IsAutoTriggered = true
         };
 
-        project.LastPolledCommitSha = latestSha;
         await icons.InvalidateAuto(project.Id, ct);
 
         await storage.AddJobAsync(job, ct);
-        await storage.UpdateProjectAsync(project, ct);
+        await storage.RecordProjectPollAsync(project.Id, polledAt, latestSha, ct);
 
         signal.Notify();
     }

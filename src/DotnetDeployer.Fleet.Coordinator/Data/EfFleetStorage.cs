@@ -38,6 +38,18 @@ public class EfFleetStorage(IDbContextFactory<FleetDbContext> factory, IWorkerSe
         await db.SaveChangesAsync(ct);
     }
 
+    public async Task RecordProjectPollAsync(Guid projectId, DateTimeOffset polledAt, string? commitSha, CancellationToken ct = default)
+    {
+        await using var db = await factory.CreateDbContextAsync(ct);
+        var project = db.Projects.Where(p => p.Id == projectId);
+        if (commitSha is null)
+            await project.ExecuteUpdateAsync(set => set.SetProperty(p => p.LastPolledAt, polledAt), ct);
+        else
+            await project.ExecuteUpdateAsync(set => set
+                .SetProperty(p => p.LastPolledAt, polledAt)
+                .SetProperty(p => p.LastPolledCommitSha, commitSha), ct);
+    }
+
     public async Task DeleteProjectAsync(Guid id, CancellationToken ct = default)
     {
         await using var db = await factory.CreateDbContextAsync(ct);

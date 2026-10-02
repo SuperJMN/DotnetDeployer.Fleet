@@ -1,7 +1,9 @@
 using DotnetDeployer.Fleet.Core.Domain;
 using DotnetDeployer.Fleet.Core.Interfaces;
+using DotnetDeployer.Fleet.Coordinator.Data;
 using DotnetDeployer.Fleet.Coordinator.Services;
 using FluentAssertions;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
 using NSubstitute;
@@ -18,12 +20,13 @@ public class PollingBackgroundServiceTests
     // Expose protected internals via thin subclass
     private sealed class TestablePoller : PollingBackgroundService
     {
-        public TestablePoller(IServiceScopeFactory scopeFactory, ProjectIconStore? icons = null)
+        public TestablePoller(IServiceScopeFactory scopeFactory, ProjectIconStore? icons = null, IGitCommitResolver? resolver = null)
             : base(
                 scopeFactory,
                 NullLogger<PollingBackgroundService>.Instance,
                 new JobAssignmentSignal(),
-                icons ?? new ProjectIconStore(Path.Combine(Path.GetTempPath(), $"fleet-icons-{Guid.NewGuid():N}"), NullLogger<ProjectIconStore>.Instance))
+                icons ?? new ProjectIconStore(Path.Combine(Path.GetTempPath(), $"fleet-icons-{Guid.NewGuid():N}"), NullLogger<ProjectIconStore>.Instance),
+                resolver)
         { }
 
         public Task PollAllAsync(CancellationToken ct) => PollAllProjectsAsync(ct);
@@ -119,6 +122,65 @@ public class PollingBackgroundServiceTests
             DeleteIfExists(repo);
             DeleteIfExists(iconRoot);
         }
+    }
+
+    [Fact]
+    public async Task Project_edit_made_while_polling_is_not_overwritten()
+    {
+        var dbPath = Path.Combine(Path.GetTempPath(), $"fleet-poll-race-{Guid.NewGuid():N}.db");
+        var factory = new InlineFactory(new DbContextOptionsBuilder<FleetDbContext>().UseSqlite($"Data Source={dbPath}").Options);
+        using (var db = factory.CreateDbContext())
+            db.Database.EnsureCreated();
+        var storage = new EfFleetStorage(factory, new CapabilityWorkerSelector());
+        var project = new Project
+        {
+            Id = Guid.NewGuid(), Name = "Sms.Mcp", GitUrl = "https://example.com/repo.git", Branch = "main",
+            PollingIntervalMinutes = 3, LastPolledAt = DateTimeOffset.UtcNow.AddMinutes(-10),
+            LastPolledCommitSha = "old-sha", ExpectedPackageIds = ["Sms.Mcp"]
+        };
+        await storage.AddProjectAsync(project);
+
+        // The GUI saves an edit while the poller waits on the remote lookup.
+        var resolver = new EditingResolver(async () =>
+        {
+            var edited = (await storage.GetProjectAsync(project.Id))!;
+            edited.ExpectedPackageIds = ["Sms.Mcp", "Sms.Debug.Core"];
+            await storage.UpdateProjectAsync(edited);
+        }, "new-sha");
+
+        var scope = Substitute.For<IServiceScope>();
+        scope.ServiceProvider.GetService(typeof(IFleetStorage)).Returns(storage);
+        var scopes = Substitute.For<IServiceScopeFactory>();
+        scopes.CreateScope().Returns(scope);
+
+        try
+        {
+            await new TestablePoller(scopes, resolver: resolver).PollAllAsync(CancellationToken.None);
+
+            var saved = (await storage.GetProjectAsync(project.Id))!;
+            saved.ExpectedPackageIds.Should().Equal("Sms.Mcp", "Sms.Debug.Core");
+            saved.LastPolledCommitSha.Should().Be("new-sha");
+            saved.LastPolledAt.Should().BeAfter(project.LastPolledAt!.Value);
+        }
+        finally
+        {
+            Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
+            try { File.Delete(dbPath); } catch { /* best-effort */ }
+        }
+    }
+
+    private sealed class EditingResolver(Func<Task> duringLookup, string sha) : IGitCommitResolver
+    {
+        public async Task<string?> ResolveLatestShaAsync(string gitUrl, string branch, string? gitToken = null, CancellationToken ct = default)
+        {
+            await duringLookup();
+            return sha;
+        }
+    }
+
+    private sealed class InlineFactory(DbContextOptions<FleetDbContext> options) : IDbContextFactory<FleetDbContext>
+    {
+        public FleetDbContext CreateDbContext() => new(options);
     }
 
     private static string CreateGitRepositoryWithCommit()
