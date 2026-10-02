@@ -1,4 +1,5 @@
 using System.Reflection;
+using System.Security.Cryptography;
 using System.Security.Claims;
 using DotnetDeployer.Fleet.Coordinator.Data;
 using DotnetDeployer.Fleet.Coordinator.Endpoints;
@@ -12,11 +13,13 @@ namespace DotnetDeployer.Fleet.Tests;
 public class JobLifecycleRaceTests : IDisposable
 {
     private readonly string dbPath;
+    private readonly string releaseRoot;
     private readonly IDbContextFactory<FleetDbContext> factory;
 
     public JobLifecycleRaceTests()
     {
         dbPath = Path.Combine(Path.GetTempPath(), $"fleet-job-race-{Guid.NewGuid():N}.db");
+        releaseRoot = Path.Combine(Path.GetTempPath(), $"fleet-job-race-release-{Guid.NewGuid():N}");
         var options = new DbContextOptionsBuilder<FleetDbContext>()
             .UseSqlite($"Data Source={dbPath}")
             .Options;
@@ -35,6 +38,7 @@ public class JobLifecycleRaceTests : IDisposable
     public void Dispose()
     {
         try { File.Delete(dbPath); } catch { /* best-effort */ }
+        try { if (Directory.Exists(releaseRoot)) Directory.Delete(releaseRoot, recursive: true); } catch { /* best-effort */ }
     }
 
     [Fact]
@@ -106,39 +110,43 @@ public class JobLifecycleRaceTests : IDisposable
     }
 
     [Fact]
-    public async Task ReportCompleted_WhenPushedPackagesAreStillIndexing_SucceedsWithPendingVerification()
+    public async Task ReportCompleted_WhenNuGetIsIndexing_KeepsJobPendingAndReleasesWorker()
     {
         var storage = new EfFleetStorage(factory, new CapabilityWorkerSelector());
         var projectId = Guid.NewGuid();
         var workerId = Guid.NewGuid();
         var jobId = Guid.NewGuid();
-        var sha = new string('f', 40);
-        var releases = new NuGetReleaseStore(Path.Combine(Path.GetTempPath(), "fleet-race-releases-" + Guid.NewGuid().ToString("N")));
-        var bytes = "accepted package"u8.ToArray();
-        await releases.UploadPackageAsync(projectId, sha, "DemoLib", new MemoryStream(bytes));
-        await releases.CreateAsync(new NuGetReleaseManifest(projectId, sha, "1.0.0", "https://api.nuget.org/v3/index.json",
-            "NUGET_API_KEY", false,
-            [new NuGetReleasePackage("DemoLib", "1.0.0", "packages/DemoLib.nupkg",
-                Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(bytes)).ToLowerInvariant(), "content-hash")],
+        var sha = new string('a', 40);
+        var releases = new NuGetReleaseStore(releaseRoot);
+        var bytes = new byte[] { 1, 2, 3 };
+        await releases.UploadPackageAsync(projectId, sha, "Demo", new MemoryStream(bytes));
+        await releases.CreateAsync(new NuGetReleaseManifest(projectId, sha, "1.0.0",
+            "https://api.nuget.org/v3/index.json", "NUGET_API_KEY", false,
+            [new NuGetReleasePackage("Demo", "1.0.0", "packages/Demo.nupkg",
+                Convert.ToHexString(SHA256.HashData(bytes)).ToLowerInvariant(), "content-hash")],
             DateTimeOffset.UtcNow));
-        await releases.SetStateAsync(projectId, sha, "DemoLib", NuGetReleasePackageState.AwaitingVerification, "Accepted");
-
+        await releases.SetStateAsync(projectId, sha, "Demo", NuGetReleasePackageState.AwaitingIndex, "Push outcome uncertain");
         await storage.AddProjectAsync(new Project
         {
             Id = projectId, Name = "p", GitUrl = "https://example.com/r.git", Branch = "main"
         });
         await storage.AddJobAsync(new DeploymentJob
         {
-            Id = jobId, ProjectId = projectId, WorkerId = workerId, Status = JobStatus.Running,
-            Kind = JobKind.Deploy, TriggerCommitSha = sha
+            Id = jobId, ProjectId = projectId, WorkerId = workerId,
+            Status = JobStatus.Running, TriggerCommitSha = sha,
+            StartedAt = DateTimeOffset.UtcNow.AddMinutes(-1)
         });
 
-        await InvokeReportCompleted(jobId, workerId, storage, releases);
+        var result = await InvokeReportCompleted(jobId, workerId, storage,
+            new JobEndpoints.CompleteJobRequest(false, null, AwaitingNuGetIndex: true), releases);
 
-        var completed = await storage.GetJobAsync(jobId);
-        completed!.Status.Should().Be(JobStatus.Succeeded);
-        completed.ErrorMessage.Should().BeNull();
-        completed.NuGetVerification.Should().Be(NuGetVerificationStatus.Pending);
+        (result.GetType().GetProperty("StatusCode")?.GetValue(result) as int?)
+            .Should().Be(StatusCodes.Status200OK);
+        var pending = await storage.GetJobAsync(jobId);
+        pending!.Status.Should().Be(JobStatus.AwaitingNuGetIndex);
+        pending.WorkerId.Should().BeNull();
+        pending.FinishedAt.Should().BeNull();
+        pending.ErrorMessage.Should().BeNull();
     }
 
     private static async Task SeedTerminalJob(
@@ -179,8 +187,44 @@ public class JobLifecycleRaceTests : IDisposable
         return await task;
     }
 
+    [Fact]
+    public async Task ReportCompleted_WhenPushedPackagesAreStillIndexing_SucceedsWithPendingVerification()
+    {
+        var storage = new EfFleetStorage(factory, new CapabilityWorkerSelector());
+        var projectId = Guid.NewGuid();
+        var workerId = Guid.NewGuid();
+        var jobId = Guid.NewGuid();
+        var sha = new string('f', 40);
+        var releases = new NuGetReleaseStore(releaseRoot);
+        var bytes = "accepted package"u8.ToArray();
+        await releases.UploadPackageAsync(projectId, sha, "DemoLib", new MemoryStream(bytes));
+        await releases.CreateAsync(new NuGetReleaseManifest(projectId, sha, "1.0.0", "https://api.nuget.org/v3/index.json",
+            "NUGET_API_KEY", false,
+            [new NuGetReleasePackage("DemoLib", "1.0.0", "packages/DemoLib.nupkg",
+                Convert.ToHexString(SHA256.HashData(bytes)).ToLowerInvariant(), "content-hash")],
+            DateTimeOffset.UtcNow));
+        await releases.SetStateAsync(projectId, sha, "DemoLib", NuGetReleasePackageState.AwaitingVerification, "Accepted");
+
+        await storage.AddProjectAsync(new Project
+        {
+            Id = projectId, Name = "p", GitUrl = "https://example.com/r.git", Branch = "main"
+        });
+        await storage.AddJobAsync(new DeploymentJob
+        {
+            Id = jobId, ProjectId = projectId, WorkerId = workerId, Status = JobStatus.Running,
+            Kind = JobKind.Deploy, TriggerCommitSha = sha
+        });
+
+        await InvokeReportCompleted(jobId, workerId, storage, releases: releases);
+
+        var completed = await storage.GetJobAsync(jobId);
+        completed!.Status.Should().Be(JobStatus.Succeeded);
+        completed.ErrorMessage.Should().BeNull();
+        completed.NuGetVerification.Should().Be(NuGetVerificationStatus.Pending);
+    }
+
     private static async Task<IResult> InvokeReportCompleted(Guid jobId, Guid workerId, EfFleetStorage storage,
-        NuGetReleaseStore? releases = null)
+        JobEndpoints.CompleteJobRequest? request = null, NuGetReleaseStore? releases = null)
     {
         var method = typeof(JobEndpoints).GetMethod(
             "ReportCompleted",
@@ -189,12 +233,12 @@ public class JobLifecycleRaceTests : IDisposable
         var task = (Task<IResult>)method.Invoke(null, new object[]
         {
             jobId,
-            new JobEndpoints.CompleteJobRequest(true, null),
+            request ?? new JobEndpoints.CompleteJobRequest(true, null),
             CreateWorkerContext(workerId),
             storage,
+            releases ?? new NuGetReleaseStore(Path.GetTempPath()),
             new LogBroadcaster(),
-            new JobAssignmentSignal(),
-            releases ?? new NuGetReleaseStore(Path.Combine(Path.GetTempPath(), "fleet-race-releases-" + Guid.NewGuid().ToString("N")))
+            new JobAssignmentSignal()
         })!;
         return await task;
     }

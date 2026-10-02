@@ -585,6 +585,7 @@ public partial class JobViewModel : ReactiveObject
         },
         JobStatus.Failed => "Failed",
         JobStatus.Cancelled => "Cancelled",
+        JobStatus.AwaitingNuGetIndex => "Waiting for NuGet",
         _ => Job.Status.ToString()
     };
 
@@ -600,6 +601,7 @@ public partial class JobViewModel : ReactiveObject
             : "mdi-check-circle",
         JobStatus.Failed => "mdi-alert-circle",
         JobStatus.Cancelled => "mdi-cancel",
+        JobStatus.AwaitingNuGetIndex => "mdi-clock-outline",
         _ => "mdi-help-circle-outline"
     });
 
@@ -611,6 +613,7 @@ public partial class JobViewModel : ReactiveObject
         JobStatus.Succeeded => new SolidColorBrush(Color.Parse("#43A047")),
         JobStatus.Failed => new SolidColorBrush(Color.Parse("#E53935")),
         JobStatus.Cancelled => new SolidColorBrush(Color.Parse("#FB8C00")),
+        JobStatus.AwaitingNuGetIndex => new SolidColorBrush(Color.Parse("#29B6F6")),
         _ => Brushes.Gray
     };
 

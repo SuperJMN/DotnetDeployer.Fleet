@@ -18,6 +18,7 @@ public interface IWorkerJobSource
     Task<NuGetReleaseSnapshot> CreateNuGetReleaseAsync(Guid jobId, NuGetReleaseManifest manifest, CancellationToken ct = default);
     Task<NuGetReleaseSnapshot> SetNuGetReleasePackageStateAsync(Guid jobId, string commitSha, string packageId, NuGetReleasePackageState state, string? detail, CancellationToken ct = default);
     Task ReportJobCompletedAsync(Guid jobId, bool success, string? errorMessage, CancellationToken ct = default);
+    Task ReportJobAwaitingNuGetIndexAsync(Guid jobId, CancellationToken ct = default);
 
     /// <summary>
     /// Posts a high-level phase event for the job (start/end/info). Used by the

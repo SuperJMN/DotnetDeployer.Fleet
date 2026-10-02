@@ -7,5 +7,6 @@ public enum JobStatus
     Running,
     Succeeded,
     Failed,
-    Cancelled
+    Cancelled,
+    AwaitingNuGetIndex
 }

@@ -14,6 +14,72 @@ public sealed class NuGetReleaseRetryServiceTests : IDisposable
     private readonly string root = Path.Combine(Path.GetTempPath(), "fleet-release-retry-" + Guid.NewGuid().ToString("N"));
 
     [Fact]
+    public async Task Indexing_wait_requeues_the_same_job_after_more_than_fifteen_minutes()
+    {
+        var now = DateTimeOffset.UtcNow;
+        var project = new Project { Id = Guid.NewGuid(), Name = "Demo", GitUrl = "https://example.com/repo.git", Branch = "main" };
+        var sha = new string('e', 40);
+        var releases = await CreateReleaseAsync(project.Id, sha, now, NuGetReleasePackageState.AwaitingIndex);
+        var waiting = new DeploymentJob
+        {
+            ProjectId = project.Id, TriggerCommitSha = sha, Status = JobStatus.AwaitingNuGetIndex,
+            EnqueuedAt = now, WorkerId = null
+        };
+        var jobs = new List<DeploymentJob> { waiting };
+        var (service, _) = CreateService(jobs, project, releases);
+
+        await service.RetryIncompleteAsync(now.AddMinutes(3));
+        waiting.Status.Should().Be(JobStatus.AwaitingNuGetIndex);
+
+        await service.RetryIncompleteAsync(now.AddMinutes(16));
+        jobs.Should().ContainSingle();
+        waiting.Status.Should().Be(JobStatus.Queued);
+        waiting.EnqueuedAt.Should().Be(now.AddMinutes(16));
+        waiting.InitialEnqueuedAt.Should().Be(now);
+        waiting.FinishedAt.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task Indexing_wait_expires_only_after_the_release_deadline()
+    {
+        var now = DateTimeOffset.UtcNow;
+        var project = new Project { Id = Guid.NewGuid(), Name = "Demo", GitUrl = "https://example.com/repo.git", Branch = "main" };
+        var sha = new string('f', 40);
+        var releases = await CreateReleaseAsync(project.Id, sha, now.AddDays(-2), NuGetReleasePackageState.AwaitingIndex);
+        var waiting = new DeploymentJob
+        {
+            ProjectId = project.Id, TriggerCommitSha = sha, Status = JobStatus.AwaitingNuGetIndex,
+            EnqueuedAt = now.AddDays(-2)
+        };
+        var (service, _) = CreateService([waiting], project, releases);
+
+        await service.RetryIncompleteAsync(now.AddMinutes(5));
+
+        waiting.Status.Should().Be(JobStatus.Failed);
+        waiting.ErrorMessage.Should().Contain("24 hours");
+        (await releases.GetAsync(project.Id, sha))!.Progress.Single().State
+            .Should().Be(NuGetReleasePackageState.Incomplete);
+    }
+
+    [Fact]
+    public async Task Indexing_deadline_still_permits_one_final_feed_verification()
+    {
+        var now = DateTimeOffset.UtcNow;
+        var project = new Project { Id = Guid.NewGuid(), Name = "Demo", GitUrl = "https://example.com/repo.git", Branch = "main" };
+        var sha = new string('1', 40);
+        var releases = await CreateReleaseAsync(project.Id, sha, now, NuGetReleasePackageState.AwaitingIndex);
+        var waiting = new DeploymentJob
+        {
+            ProjectId = project.Id, TriggerCommitSha = sha, Status = JobStatus.AwaitingNuGetIndex
+        };
+        var (service, _) = CreateService([waiting], project, releases);
+
+        await service.RetryIncompleteAsync(now.AddHours(25));
+
+        waiting.Status.Should().Be(JobStatus.Queued);
+    }
+
+    [Fact]
     public async Task Incomplete_release_retries_after_delay_without_repeating_or_changing_sha()
     {
         var now = DateTimeOffset.UtcNow;

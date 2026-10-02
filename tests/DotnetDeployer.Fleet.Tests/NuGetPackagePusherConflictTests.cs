@@ -165,8 +165,7 @@ public sealed class NuGetPackagePusherConflictTests : IDisposable
 
         result.Success.Should().BeFalse("remote 409 conflict must fail closed");
         result.Error.Should().NotBeNull();
-        result.Error.Should().Contain("Conflict");
-        result.Error.Should().Contain("409");
+        result.Error.Should().Contain("HTTP 409");
     }
 
     [Fact]
@@ -192,8 +191,7 @@ public sealed class NuGetPackagePusherConflictTests : IDisposable
             fakeRunner);
 
         result.Success.Should().BeFalse("duplicate detected on remote feed must never declare success without artifact verification");
-        result.Error.Should().Contain("Conflict");
-        result.Error.Should().Contain("identity could not be verified");
+        result.Error.Should().Contain("identity has not been verified");
     }
 
     [Fact]

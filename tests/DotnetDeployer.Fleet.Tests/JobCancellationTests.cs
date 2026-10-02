@@ -104,6 +104,30 @@ public class JobCancellationTests : IDisposable
         running.FinishedAt.Should().BeNull();
     }
 
+    [Fact]
+    public async Task CancelJob_WhileAwaitingNuGetIndex_ShouldFinishImmediately()
+    {
+        var storage = new EfFleetStorage(factory, new CapabilityWorkerSelector());
+        var projectId = Guid.NewGuid();
+        var jobId = Guid.NewGuid();
+        await storage.AddProjectAsync(new Project
+        {
+            Id = projectId, Name = "p", GitUrl = "https://example.com/r.git", Branch = "main"
+        });
+        await storage.AddJobAsync(new DeploymentJob
+        {
+            Id = jobId, ProjectId = projectId,
+            Status = JobStatus.AwaitingNuGetIndex,
+            EnqueuedAt = DateTimeOffset.UtcNow.AddMinutes(-10)
+        });
+
+        await InvokeCancelJob(jobId, storage);
+
+        var cancelled = await storage.GetJobAsync(jobId);
+        cancelled!.Status.Should().Be(JobStatus.Cancelled);
+        cancelled.FinishedAt.Should().NotBeNull();
+    }
+
     private static async Task<IResult> InvokeCancelJob(Guid jobId, IFleetStorage storage)
     {
         var method = typeof(JobEndpoints).GetMethod(

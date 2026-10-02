@@ -10,8 +10,8 @@ publication follows NuGet. Each package separately records `Prepared`, `Publishi
 
 ## Accepted pushes and background verification
 
-A release succeeds once the feed accepts every push. A package that the feed accepted
-but does not serve yet is `AwaitingVerification`; it is not pushed again. The job
+A release succeeds once the feed accepts every push. A package that the feed accepted,
+or that it rejected as a duplicate while it does not serve it yet, is `AwaitingVerification`; it is not pushed again. The job
 finishes as succeeded with NuGet verification `Pending`, and GitHub publication runs
 straight away. The coordinator checks those packages every minute without a worker.
 When each one is downloadable with the exact pushed bytes, it becomes `Complete` and the
@@ -36,31 +36,37 @@ per-package progress. Read the job logs and the exact package versions on the fe
 The coordinator also stores the same data under
 `<Releases:RootDir>/<project-id-N>/<commit-sha>/`.
 
-`AwaitingIndex` is for pushes with an ambiguous outcome, such as a lost response or a
-timeout, after which the package is not downloadable. Fleet releases the worker and
-queues another attempt after four minutes. The coordinator persists this decision, so a restart does not lose it. Each
-attempt verifies the exact remote package before any new push and reuses the stored
-bytes. After twelve failed attempts, Fleet changes the state to `Incomplete` and
-reports that manual recovery is required.
+For `AwaitingIndex`, a push returned an ambiguous result, such as a lost response or a
+timeout, and the exact
+package cannot yet be downloaded to establish whether that push succeeded. The
+deployment stays pending and Fleet releases the worker.
+The coordinator requeues the same job after four minutes, so a restart does not lose
+the wait. Each attempt verifies unresolved remote packages before a new push and
+reuses the stored bytes. After 24 hours from manifest preparation, Fleet makes one
+final feed check; if the package is still unavailable, it marks the deployment failed
+and requires manual recovery.
+Older failed jobs created before this change still use the legacy retry path.
 
 For `Publishing`, `AwaitingIndex`, or `Incomplete`, an administrator can also POST
 `/api/projects/{projectId}/deploy` with
 `{"commitSha":"<full manifest SHA>"}` to queue another job for the **same project and
 full commit SHA**. The worker fetches the existing manifest and package bytes from the
-coordinator, checks all remote ID/version pairs, and resumes the missing packages. NuGet
+coordinator, checks unresolved remote ID/version pairs, and resumes the missing packages. NuGet
 recovery does not require Git, build, tests, or repacking. A push timeout, lost response,
 or worker crash is
 therefore safe to retry: a matching downloadable package becomes `Complete`; a missing
-one is pushed from the same stored artifact. Delayed availability is polled briefly
-after each push; the scheduled retry waits for NuGet indexing without occupying a
-worker.
+one is pushed from the same stored artifact. A successful push response, or a duplicate
+of a version not yet downloadable, moves that package to `AwaitingVerification`. An
+ambiguous response is checked against the feed; if it is not yet downloadable, the
+scheduled retry waits for indexing without occupying a worker.
 
 If `InterventionRequired` appears, stop automated retries. Preserve the manifest,
 staged files, logs, and feed response. Compare the feed's exact ID/version package to
 the manifest and identify the owner of the conflicting package. NuGet package versions
 on nuget.org cannot be overwritten reliably. Publish a corrected release under a new
 version or use the feed owner's approved removal process; never edit the manifest,
-replace its staged bytes, or treat HTTP 409 as equivalence. If coordinator storage is
+replace its staged bytes, or treat HTTP 409 as equivalence; a 409 is only accepted once
+background verification has downloaded identical bytes. If coordinator storage is
 lost, do not retry publication until the original manifest and artifacts are restored
 from backup or an operator has established their exact provenance.
 
@@ -70,3 +76,5 @@ remain published and a later retry can finish GitHub publication. The GitHub sta
 only after the feed has accepted every manifest package. NuGet publication cannot be
 made atomically visible on nuget.org: during the sequence and while NuGet indexes,
 consumers may see a subset.
+NuGet can also report a later validation failure; background verification then fails the job
+when the package never becomes downloadable.

@@ -7,7 +7,7 @@ using Microsoft.Extensions.Logging;
 namespace DotnetDeployer.Fleet.Coordinator.Services;
 
 /// <summary>
-/// Resumes a durable release after a feed has had time to index an accepted push.
+/// Resumes a durable release after an ambiguous push has had time to appear on the feed.
 /// The worker is free to run other jobs between attempts.
 /// </summary>
 public sealed class NuGetReleaseRetryService(
@@ -17,6 +17,7 @@ public sealed class NuGetReleaseRetryService(
 {
     private static readonly TimeSpan TickInterval = TimeSpan.FromSeconds(30);
     internal TimeSpan RetryDelay { get; set; } = TimeSpan.FromMinutes(4);
+    internal TimeSpan MaxIndexingAge { get; set; } = TimeSpan.FromHours(24);
     internal int MaxAttempts { get; set; } = 12;
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -51,15 +52,68 @@ public sealed class NuGetReleaseRetryService(
                      .GroupBy(j => (j.ProjectId, Sha: j.TriggerCommitSha!), ReleaseKeyComparer.Instance))
         {
             var latest = attempts.OrderByDescending(j => j.EnqueuedAt).ThenByDescending(j => j.Id).First();
-            if (latest.Status != JobStatus.Failed || latest.FinishedAt is not { } finishedAt
-                || now - finishedAt < RetryDelay)
+            if (latest.Status is not (JobStatus.Failed or JobStatus.AwaitingNuGetIndex))
                 continue;
 
             try
             {
                 var release = await releases.GetAsync(latest.ProjectId, latest.TriggerCommitSha!, ct);
-                if (release is null || !release.Progress.Any(p => p.State == NuGetReleasePackageState.AwaitingIndex)
+                if (release is null)
+                    continue;
+
+                if (latest.Status == JobStatus.AwaitingNuGetIndex)
+                {
+                    if (release.Progress.Any(p => p.State is NuGetReleasePackageState.Incomplete or NuGetReleasePackageState.InterventionRequired))
+                    {
+                        latest.Status = JobStatus.Failed;
+                        latest.ErrorMessage = "NuGet release requires manual intervention; inspect the durable manifest.";
+                        latest.MarkFinished(now);
+                        await storage.UpdateJobAsync(latest, ct);
+                        continue;
+                    }
+                    var awaiting = release.Progress
+                        .Where(p => p.State == NuGetReleasePackageState.AwaitingIndex)
+                        .ToList();
+                    if (awaiting.Count > 0 && now - awaiting.Max(p => p.UpdatedAt) < RetryDelay)
+                        continue;
+                    // A package may have become downloadable just before the deadline.
+                    // Require one worker verification after it before declaring failure.
+                    if (awaiting.Count > 0 && now - release.Manifest.PreparedAt >= MaxIndexingAge
+                        && awaiting.Max(p => p.UpdatedAt) >= release.Manifest.PreparedAt + MaxIndexingAge)
+                    {
+                        latest.Status = JobStatus.Failed;
+                        latest.ErrorMessage = "NuGet indexing did not complete within 24 hours; inspect the feed and retry the durable manifest manually.";
+                        latest.MarkFinished(now);
+                        await storage.UpdateJobAsync(latest, ct);
+                        foreach (var package in release.Progress.Where(p => p.State == NuGetReleasePackageState.AwaitingIndex))
+                            await releases.SetStateAsync(latest.ProjectId, latest.TriggerCommitSha!, package.Id,
+                                NuGetReleasePackageState.Incomplete, "Automatic indexing wait expired", ct);
+                        continue;
+                    }
+                    if (await storage.GetProjectAsync(latest.ProjectId, ct) is null)
+                        continue;
+
+                    latest.Status = JobStatus.Queued;
+                    latest.InitialEnqueuedAt ??= latest.EnqueuedAt;
+                    latest.EnqueuedAt = now;
+                    latest.ErrorMessage = null;
+                    await storage.UpdateJobAsync(latest, ct);
+                    await storage.AddLogEntriesAsync(
+                        [new LogEntry
+                        {
+                            JobId = latest.Id,
+                            Timestamp = now,
+                            Line = $"[nuget.release] Retrying durable manifest for {latest.TriggerCommitSha} after NuGet indexing delay."
+                        }], ct);
+                    signal.Notify();
+                    continue;
+                }
+
+                if (!release.Progress.Any(p => p.State == NuGetReleasePackageState.AwaitingIndex)
                     || release.Progress.Any(p => p.State == NuGetReleasePackageState.InterventionRequired))
+                    continue;
+
+                if (latest.FinishedAt is not { } finishedAt || now - finishedAt < RetryDelay)
                     continue;
 
                 var failedAttempts = attempts.Count(j => j.EnqueuedAt >= release.Manifest.PreparedAt

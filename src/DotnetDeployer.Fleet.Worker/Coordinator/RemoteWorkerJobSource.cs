@@ -143,6 +143,13 @@ public class RemoteWorkerJobSource : IWorkerJobSource
         resp.EnsureSuccessStatusCode();
     }
 
+    public async Task ReportJobAwaitingNuGetIndexAsync(Guid jobId, CancellationToken ct = default)
+    {
+        var resp = await http.PostAsJsonAsync($"/api/queue/jobs/{jobId}/complete",
+            new { success = false, errorMessage = (string?)null, awaitingNuGetIndex = true }, ct);
+        resp.EnsureSuccessStatusCode();
+    }
+
     public async Task<JobAction> GetJobActionAsync(Guid jobId, CancellationToken ct = default)
     {
         try

@@ -102,7 +102,7 @@ public sealed class NuGetReleaseStore(string rootDirectory)
                 throw new InvalidOperationException("Conflict requires manual intervention; automatic retry is forbidden.");
             if (previous.State == NuGetReleasePackageState.Complete
                 && state is not (NuGetReleasePackageState.Complete or NuGetReleasePackageState.InterventionRequired))
-                throw new InvalidOperationException("A verified package cannot be marked incomplete.");
+                throw new InvalidOperationException("A completed package push cannot be marked incomplete.");
             var dir = DirectoryFor(projectId, commitSha);
             await AtomicWriteAsync(ProgressPath(dir, packageId),
                 new NuGetReleasePackageProgress(packageId, state, detail, DateTimeOffset.UtcNow), ct);
