@@ -9,6 +9,12 @@ public interface IFleetStorage
     Task<Project?> GetProjectAsync(Guid id, CancellationToken ct = default);
     Task AddProjectAsync(Project project, CancellationToken ct = default);
     Task UpdateProjectAsync(Project project, CancellationToken ct = default);
+
+    /// <summary>
+    /// Records a polling pass by writing only <see cref="Project.LastPolledAt"/> and, when
+    /// given, <see cref="Project.LastPolledCommitSha"/>, so concurrent edits are preserved.
+    /// </summary>
+    Task RecordProjectPollAsync(Guid projectId, DateTimeOffset polledAt, string? commitSha, CancellationToken ct = default);
     Task DeleteProjectAsync(Guid id, CancellationToken ct = default);
 
     // Jobs
