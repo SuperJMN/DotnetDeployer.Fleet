@@ -577,7 +577,12 @@ public partial class JobViewModel : ReactiveObject
         JobStatus.Queued => "Queued",
         JobStatus.Assigned => "Assigned",
         JobStatus.Running => "Running",
-        JobStatus.Succeeded => "Succeeded",
+        JobStatus.Succeeded => Job.NuGetVerification switch
+        {
+            NuGetVerificationStatus.Pending => "Succeeded · verifying NuGet",
+            NuGetVerificationStatus.Verified => "Succeeded · NuGet verified",
+            _ => "Succeeded"
+        },
         JobStatus.Failed => "Failed",
         JobStatus.Cancelled => "Cancelled",
         JobStatus.AwaitingNuGetIndex => "Waiting for NuGet",
@@ -591,7 +596,9 @@ public partial class JobViewModel : ReactiveObject
         JobStatus.Queued => "mdi-clock-outline",
         JobStatus.Assigned => "mdi-account-arrow-right-outline",
         JobStatus.Running => "mdi-rocket-launch",
-        JobStatus.Succeeded => "mdi-check-circle",
+        JobStatus.Succeeded => Job.NuGetVerification == NuGetVerificationStatus.Verified
+            ? "mdi-check-decagram"
+            : "mdi-check-circle",
         JobStatus.Failed => "mdi-alert-circle",
         JobStatus.Cancelled => "mdi-cancel",
         JobStatus.AwaitingNuGetIndex => "mdi-clock-outline",

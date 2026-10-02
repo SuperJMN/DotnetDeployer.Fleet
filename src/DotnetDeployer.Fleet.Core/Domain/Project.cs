@@ -23,8 +23,9 @@ public class Project
     public bool RunTestsBeforeDeploy { get; set; } = true;
 
     /// <summary>
-    /// Authoritative list of expected package IDs for package releases.
-    /// If empty or missing, a package release job fails closed before pushing to the feed.
+    /// Optional pin of the package IDs a release must produce. When empty, a release
+    /// publishes every packable project (<c>IsPackable=true</c>) that <c>dotnet pack</c> emits.
+    /// When set, any missing or extra package fails the release before pushing to the feed.
     /// </summary>
     public List<string> ExpectedPackageIds { get; set; } = [];
 

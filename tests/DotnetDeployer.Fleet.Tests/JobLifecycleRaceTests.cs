@@ -187,6 +187,42 @@ public class JobLifecycleRaceTests : IDisposable
         return await task;
     }
 
+    [Fact]
+    public async Task ReportCompleted_WhenPushedPackagesAreStillIndexing_SucceedsWithPendingVerification()
+    {
+        var storage = new EfFleetStorage(factory, new CapabilityWorkerSelector());
+        var projectId = Guid.NewGuid();
+        var workerId = Guid.NewGuid();
+        var jobId = Guid.NewGuid();
+        var sha = new string('f', 40);
+        var releases = new NuGetReleaseStore(releaseRoot);
+        var bytes = "accepted package"u8.ToArray();
+        await releases.UploadPackageAsync(projectId, sha, "DemoLib", new MemoryStream(bytes));
+        await releases.CreateAsync(new NuGetReleaseManifest(projectId, sha, "1.0.0", "https://api.nuget.org/v3/index.json",
+            "NUGET_API_KEY", false,
+            [new NuGetReleasePackage("DemoLib", "1.0.0", "packages/DemoLib.nupkg",
+                Convert.ToHexString(SHA256.HashData(bytes)).ToLowerInvariant(), "content-hash")],
+            DateTimeOffset.UtcNow));
+        await releases.SetStateAsync(projectId, sha, "DemoLib", NuGetReleasePackageState.AwaitingVerification, "Accepted");
+
+        await storage.AddProjectAsync(new Project
+        {
+            Id = projectId, Name = "p", GitUrl = "https://example.com/r.git", Branch = "main"
+        });
+        await storage.AddJobAsync(new DeploymentJob
+        {
+            Id = jobId, ProjectId = projectId, WorkerId = workerId, Status = JobStatus.Running,
+            Kind = JobKind.Deploy, TriggerCommitSha = sha
+        });
+
+        await InvokeReportCompleted(jobId, workerId, storage, releases: releases);
+
+        var completed = await storage.GetJobAsync(jobId);
+        completed!.Status.Should().Be(JobStatus.Succeeded);
+        completed.ErrorMessage.Should().BeNull();
+        completed.NuGetVerification.Should().Be(NuGetVerificationStatus.Pending);
+    }
+
     private static async Task<IResult> InvokeReportCompleted(Guid jobId, Guid workerId, EfFleetStorage storage,
         JobEndpoints.CompleteJobRequest? request = null, NuGetReleaseStore? releases = null)
     {

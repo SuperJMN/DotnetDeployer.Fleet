@@ -544,7 +544,8 @@ public sealed class ReleaseJobsStagingDemonstrationTests : IDisposable
     [InlineData("equivalent-409", true, NuGetReleasePackageState.Complete)]
     [InlineData("conflicting-409", false, NuGetReleasePackageState.InterventionRequired)]
     [InlineData("ambiguous-timeout", true, NuGetReleasePackageState.Complete)]
-    [InlineData("accepted-before-indexing", true, NuGetReleasePackageState.Complete)]
+    [InlineData("accepted-before-indexing", true, NuGetReleasePackageState.AwaitingVerification)]
+    [InlineData("indexing-409", true, NuGetReleasePackageState.AwaitingVerification)]
     public async Task Push_outcomes_use_acceptance_or_verified_download_when_response_is_ambiguous(
         string scenario, bool shouldSucceed, NuGetReleasePackageState expectedState)
     {
@@ -569,6 +570,8 @@ public sealed class ReleaseJobsStagingDemonstrationTests : IDisposable
             var destination = Path.Combine(source, Path.GetFileName(package));
             if (scenario == "accepted-before-indexing")
                 return (true, (string?)null);
+            if (scenario == "indexing-409")
+                return (false, "Duplicate on feed: Package 'DemoLib.1.0.0.nupkg' returned HTTP 409.");
 
             File.Copy(package, destination);
             if (scenario == "conflicting-409")
@@ -600,6 +603,11 @@ public sealed class ReleaseJobsStagingDemonstrationTests : IDisposable
             await retryWorker.ExecuteJobAsync(job, CancellationToken.None);
             (await storage.GetJobAsync(job.Id))!.Status.Should().Be(JobStatus.Succeeded);
             repeatedPushes.Should().Be(0);
+        }
+        else if (scenario == "indexing-409")
+        {
+            // The feed already holds this version; background verification decides whether it is ours.
+            Directory.GetFiles(feed, "*.nupkg", SearchOption.AllDirectories).Should().BeEmpty();
         }
         else
         {

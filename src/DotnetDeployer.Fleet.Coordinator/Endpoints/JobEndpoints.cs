@@ -405,6 +405,8 @@ public static class JobEndpoints
                 : req.Success ? JobStatus.Succeeded : JobStatus.Failed;
             job.MarkFinished(now);
             job.ErrorMessage = req.ErrorMessage;
+            if (job.Status == JobStatus.Succeeded)
+                job.NuGetVerification = await GetNuGetVerificationAsync(job, releases);
         }
         await storage.UpdateJobAsync(job);
 
@@ -428,6 +430,26 @@ public static class JobEndpoints
         // any) gets considered for this worker straight away.
         signal.Notify();
         return Results.Ok();
+    }
+
+    /// <summary>
+    /// A release succeeds once the feed accepts every push. Packages still indexing are
+    /// verified afterwards by <see cref="NuGetReleaseVerificationService"/>.
+    /// </summary>
+    private static async Task<NuGetVerificationStatus?> GetNuGetVerificationAsync(DeploymentJob job, NuGetReleaseStore releases)
+    {
+        if (job.Kind != JobKind.Deploy || string.IsNullOrWhiteSpace(job.TriggerCommitSha))
+            return null;
+
+        NuGetReleaseSnapshot? release;
+        try { release = await releases.GetAsync(job.ProjectId, job.TriggerCommitSha); }
+        catch (ArgumentException) { return null; }
+
+        if (release is null)
+            return null;
+        return release.Progress.All(p => p.State == NuGetReleasePackageState.Complete)
+            ? NuGetVerificationStatus.Verified
+            : NuGetVerificationStatus.Pending;
     }
 
     public record AppendLogsRequest(string[] Lines);

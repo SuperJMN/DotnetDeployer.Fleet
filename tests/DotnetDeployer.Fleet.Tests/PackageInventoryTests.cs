@@ -70,15 +70,33 @@ public sealed class PackageInventoryTests : IDisposable
     }
 
     [Fact]
-    public void PackageInventoryValidator_empty_expected_policy_fails_closed()
+    public void PackageInventoryValidator_without_pinned_inventory_releases_every_produced_package()
     {
         var expected = Array.Empty<string>();
-        var produced = new[] { "Package.Alpha" };
+        var produced = new[] { "Package.Beta", "Package.Alpha" };
 
         var result = PackageInventoryValidator.Validate(expected, produced);
 
+        result.IsValid.Should().BeTrue();
+        result.ProducedIds.Should().Equal("Package.Alpha", "Package.Beta");
+    }
+
+    [Fact]
+    public void PackageInventoryValidator_without_pinned_inventory_rejects_empty_pack_output()
+    {
+        var result = PackageInventoryValidator.Validate(Array.Empty<string>(), Array.Empty<string>());
+
         result.IsValid.Should().BeFalse();
-        result.ErrorMessage.Should().Contain("No expected package inventory policy configured");
+        result.ErrorMessage.Should().Contain("No NuGet packages were produced");
+    }
+
+    [Fact]
+    public void PackageInventoryValidator_without_pinned_inventory_rejects_duplicates()
+    {
+        var result = PackageInventoryValidator.Validate(Array.Empty<string>(), new[] { "Package.Alpha", "package.alpha" });
+
+        result.IsValid.Should().BeFalse();
+        result.DuplicateIds.Should().ContainSingle();
     }
 
     [Fact]

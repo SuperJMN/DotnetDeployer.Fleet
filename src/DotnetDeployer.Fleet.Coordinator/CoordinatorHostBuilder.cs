@@ -112,6 +112,7 @@ public static class CoordinatorHostBuilder
         builder.Services.AddHostedService<JobAssignmentService>();
         builder.Services.AddHostedService<StaleJobReaperService>();
         builder.Services.AddHostedService<NuGetReleaseRetryService>();
+        builder.Services.AddHostedService<NuGetReleaseVerificationService>();
 
         // ── mDNS LAN auto-discovery ──────────────────────────────────────────
         if (!options.NoMdns)
@@ -224,6 +225,7 @@ public static class CoordinatorHostBuilder
         await EnsureJobColumnAsync(db, "InitialEnqueuedAt", "INTEGER NULL");
         await EnsureJobColumnAsync(db, "Kind", "INTEGER NOT NULL DEFAULT 0");
         await EnsureJobColumnAsync(db, "PackageRequestJson", "TEXT NULL");
+        await EnsureJobColumnAsync(db, "NuGetVerification", "INTEGER NULL");
 
         // High-level phase tracking: desnormalized cache of the current phase
         // for cheap "fase actual" reads, plus a JobPhases timeline table.

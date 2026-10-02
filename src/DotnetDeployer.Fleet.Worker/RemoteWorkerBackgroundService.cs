@@ -1,5 +1,6 @@
 using DotnetDeployer.Fleet.Core.Domain;
 using DotnetDeployer.Fleet.Core.Interfaces;
+using DotnetDeployer.Fleet.Feeds;
 using DotnetDeployer.Fleet.WorkerService.Coordinator;
 using DotnetDeployer.Fleet.WorkerService.Execution;
 using DotnetDeployer.Fleet.WorkerService.Git;
@@ -420,15 +421,6 @@ public class RemoteWorkerBackgroundService : BackgroundService
                 var isPackageRelease = job.Kind == JobKind.Deploy
                     && (nugetConfig.Enabled || project.ExpectedPackageIds.Count > 0 || existingRelease is not null);
 
-                if (isPackageRelease && existingRelease is null && project.ExpectedPackageIds.Count == 0)
-                {
-                    var msg = "Package release rejected: project.ExpectedPackageIds is empty. Release jobs with NuGet enabled must declare an explicit expected package inventory.";
-                    await Log($"=== FAILED: {msg} ===");
-                    await logBuffer.FlushAsync();
-                    await jobSource.ReportJobCompletedAsync(job.Id, false, msg, ct);
-                    return;
-                }
-
                 var packageOutputDir = job.Kind == JobKind.PackageBuild
                     ? PreparePackageOutputDirectory(job.Id)
                     : null;
@@ -674,7 +666,9 @@ public class RemoteWorkerBackgroundService : BackgroundService
                             }
                         }
 
-                        await Log($"[inventory] Expected packages ({project.ExpectedPackageIds.Count}): {string.Join(", ", project.ExpectedPackageIds)}");
+                        await Log(project.ExpectedPackageIds.Count == 0
+                            ? "[inventory] No pinned inventory: releasing every packable project."
+                            : $"[inventory] Expected packages ({project.ExpectedPackageIds.Count}): {string.Join(", ", project.ExpectedPackageIds)}");
                         await Log($"[inventory] Produced packages ({producedIds.Count}): {string.Join(", ", producedIds)}");
 
                         var validation = PackageInventoryValidator.Validate(project.ExpectedPackageIds, producedIds);
@@ -998,6 +992,14 @@ public class RemoteWorkerBackgroundService : BackgroundService
                     continue;
                 }
 
+                var previous = release.Progress.Single(p => string.Equals(p.Id, item.Package.Id, StringComparison.OrdinalIgnoreCase));
+                if (previous.State == NuGetReleasePackageState.AwaitingVerification)
+                {
+                    // Already accepted by the feed; pushing again would only hit a 409 while it indexes.
+                    await onLine($"[nuget.release] {item.Package.Id} {item.Package.Version}: already accepted by the feed; indexing still in progress.");
+                    continue;
+                }
+
                 if (string.IsNullOrWhiteSpace(pushApiKey))
                     return (false, $"NuGet push secret '{release.Manifest.ApiKeySecretName}' not found in configured secrets.", false);
 
@@ -1015,19 +1017,20 @@ public class RemoteWorkerBackgroundService : BackgroundService
                     push = (false, $"Ambiguous push response: {ex.Message}");
                 }
 
-                if (push.Success)
-                {
-                    release = await jobSource.SetNuGetReleasePackageStateAsync(job.Id, sha, item.Package.Id,
-                        NuGetReleasePackageState.Complete, "NuGet accepted the package push", token);
-                    await onLine($"[nuget.release] {item.Package.Id} {item.Package.Version}: push accepted by NuGet.");
-                    continue;
-                }
-
+                // A duplicate rejection means the feed already holds this ID/version, typically
+                // from an earlier attempt that is still indexing. Background verification decides
+                // whether those bytes are ours.
+                var accepted = push.Success || NuGetPackagePusher.IsDuplicateRejection(push.Error);
                 FeedPackageStatus found;
                 try
                 {
-                    found = await verifier.WaitForExactAsync(release.Manifest.Source, item.Identity,
-                        NuGetAvailabilityTimeout, NuGetAvailabilityPollInterval, token);
+                    // An accepted push only needs one look: folder feeds expose it at once, and
+                    // HTTP feeds are verified by the coordinator after indexing. An ambiguous
+                    // push is polled briefly to learn whether the feed received it.
+                    found = accepted
+                        ? await verifier.CheckAsync(release.Manifest.Source, item.Identity, token)
+                        : await verifier.WaitForExactAsync(release.Manifest.Source, item.Identity,
+                            NuGetAvailabilityTimeout, NuGetAvailabilityPollInterval, token);
                 }
                 catch (Exception ex) when (ex is not OperationCanceledException || !token.IsCancellationRequested)
                 {
@@ -1043,6 +1046,14 @@ public class RemoteWorkerBackgroundService : BackgroundService
                         NuGetReleasePackageState.InterventionRequired, conflict, token);
                     return (false, conflict, false);
                 }
+                if (found == FeedPackageStatus.Missing && accepted)
+                {
+                    release = await jobSource.SetNuGetReleasePackageStateAsync(job.Id, sha, item.Package.Id,
+                        NuGetReleasePackageState.AwaitingVerification,
+                        push.Success ? "Accepted by the feed; awaiting indexing" : "Feed already holds this version; awaiting indexing", token);
+                    await onLine($"[nuget.release] {item.Package.Id} {item.Package.Version}: accepted by the feed. Fleet verifies availability in the background once NuGet indexes it.");
+                    continue;
+                }
                 if (found == FeedPackageStatus.Missing)
                 {
                     await jobSource.SetNuGetReleasePackageStateAsync(job.Id, sha, item.Package.Id,
@@ -1055,8 +1066,12 @@ public class RemoteWorkerBackgroundService : BackgroundService
                 await onLine($"[nuget.release] {item.Package.Id} {item.Package.Version}: exact package downloadable and verified.");
             }
 
-            if (release.Progress.Any(p => p.State != NuGetReleasePackageState.Complete))
+            if (release.Progress.Any(p => p.State is not (NuGetReleasePackageState.Complete or NuGetReleasePackageState.AwaitingVerification)))
                 return (false, "NuGet release is incomplete; final announcement withheld.", false);
+
+            var indexing = release.Progress.Where(p => p.State == NuGetReleasePackageState.AwaitingVerification).Select(p => p.Id).ToList();
+            if (indexing.Count > 0)
+                await onLine($"[nuget.release] Awaiting NuGet indexing for {string.Join(", ", indexing)}; the release is published and availability will be verified in the background.");
         }
         finally
         {

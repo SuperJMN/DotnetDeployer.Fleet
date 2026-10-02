@@ -5,8 +5,19 @@ project ID and the full validated Git commit SHA. It records the package version
 exact IDs, SHA-256 of each staged `.nupkg`, NuGet's signature-independent content hash,
 and each durable artifact path. It also pins the push secret name and whether GitHub
 publication follows NuGet. Each package separately records `Prepared`, `Publishing`,
-`AwaitingIndex`, `Incomplete`, `Complete`, or `InterventionRequired`.
-`Complete` means NuGet accepted this push or the exact existing package was verified.
+`AwaitingVerification`, `AwaitingIndex`, `Incomplete`, `Complete`, or
+`InterventionRequired`.
+
+## Accepted pushes and background verification
+
+A release succeeds once the feed accepts every push. A package that the feed accepted,
+or that it rejected as a duplicate while it does not serve it yet, is `AwaitingVerification`; it is not pushed again. The job
+finishes as succeeded with NuGet verification `Pending`, and GitHub publication runs
+straight away. The coordinator checks those packages every minute without a worker.
+When each one is downloadable with the exact pushed bytes, it becomes `Complete` and the
+job becomes `Verified`. A downloadable package with different bytes becomes
+`InterventionRequired`, and the job becomes failed. A package that is still missing six
+hours after the job finished becomes `Incomplete`, and the job also becomes failed.
 
 ## Deployment prerequisite
 
@@ -25,7 +36,8 @@ per-package progress. Read the job logs and the exact package versions on the fe
 The coordinator also stores the same data under
 `<Releases:RootDir>/<project-id-N>/<commit-sha>/`.
 
-For `AwaitingIndex`, a push returned a duplicate or ambiguous result and the exact
+For `AwaitingIndex`, a push returned an ambiguous result, such as a lost response or a
+timeout, and the exact
 package cannot yet be downloaded to establish whether that push succeeded. The
 deployment stays pending and Fleet releases the worker.
 The coordinator requeues the same job after four minutes, so a restart does not lose
@@ -43,27 +55,26 @@ coordinator, checks unresolved remote ID/version pairs, and resumes the missing 
 recovery does not require Git, build, tests, or repacking. A push timeout, lost response,
 or worker crash is
 therefore safe to retry: a matching downloadable package becomes `Complete`; a missing
-one is pushed from the same stored artifact. A successful push response completes
-that package immediately. A duplicate or ambiguous response is checked against the
-feed; if it is not yet downloadable, the scheduled retry waits for indexing without
-occupying a worker.
+one is pushed from the same stored artifact. A successful push response, or a duplicate
+of a version not yet downloadable, moves that package to `AwaitingVerification`. An
+ambiguous response is checked against the feed; if it is not yet downloadable, the
+scheduled retry waits for indexing without occupying a worker.
 
 If `InterventionRequired` appears, stop automated retries. Preserve the manifest,
 staged files, logs, and feed response. Compare the feed's exact ID/version package to
 the manifest and identify the owner of the conflicting package. NuGet package versions
 on nuget.org cannot be overwritten reliably. Publish a corrected release under a new
 version or use the feed owner's approved removal process; never edit the manifest,
-replace its staged bytes, or treat HTTP 409 as equivalence. If coordinator storage is
+replace its staged bytes, or treat HTTP 409 as equivalence; a 409 is only accepted once
+background verification has downloaded identical bytes. If coordinator storage is
 lost, do not retry publication until the original manifest and artifacts are restored
 from backup or an operator has established their exact provenance.
 
 When the manifest requires GitHub publication, the worker fetches the validated source
-after NuGet recovery, then runs that stage. If Git is unavailable, the accepted NuGet
-pushes remain recorded and a later retry can finish GitHub publication. The GitHub stage
-starts once every manifest package has either received a successful push response or
-has been verified as the exact existing package. NuGet publication cannot be
-made atomically visible on nuget.org: during
-the sequence, consumers may see a subset. NuGet may still be validating or indexing
-an accepted package after Fleet completes the deployment. NuGet can also report a
-later validation failure. Fleet's deployment status records push acceptance; it does
-not claim that consumers can already restore the package.
+after NuGet recovery, then runs that stage. If Git is unavailable, the NuGet packages
+remain published and a later retry can finish GitHub publication. The GitHub stage starts
+only after the feed has accepted every manifest package. NuGet publication cannot be
+made atomically visible on nuget.org: during the sequence and while NuGet indexes,
+consumers may see a subset.
+NuGet can also report a later validation failure; background verification then fails the job
+when the package never becomes downloadable.

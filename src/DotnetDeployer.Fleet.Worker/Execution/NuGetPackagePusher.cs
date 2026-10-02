@@ -91,7 +91,7 @@ internal static class NuGetPackagePusher
         {
             if (duplicateConflictDetected)
             {
-                var unverified = $"Package '{packageFileName}' returned HTTP 409 from '{source}'; its remote contents must be verified after it becomes downloadable.";
+                var unverified = $"{DuplicateRejectionPrefix}Package '{packageFileName}' returned HTTP 409 from '{source}'; its remote contents must be verified after it becomes downloadable.";
                 await onLine($"[nuget.push] HTTP 409: {unverified}");
                 return (false, unverified);
             }
@@ -119,13 +119,19 @@ internal static class NuGetPackagePusher
         {
             // For remote feeds, if duplicate or conflict was detected, NEVER declare success
             // without verifying remote artifact identity.
-            var unverified = $"Duplicate package '{packageFileName}' was reported by remote feed '{source}'; remote artifact identity has not been verified.";
+            var unverified = $"{DuplicateRejectionPrefix}Package '{packageFileName}' was reported by remote feed '{source}'; remote artifact identity has not been verified.";
             await onLine($"[nuget.push] Unverified duplicate: {unverified}");
             return (false, unverified);
         }
 
         return (true, null);
     }
+
+    private const string DuplicateRejectionPrefix = "Duplicate on feed: ";
+
+    /// <summary>True when the feed refused the push because it already holds this ID/version.</summary>
+    internal static bool IsDuplicateRejection(string? error) =>
+        error?.StartsWith(DuplicateRejectionPrefix, StringComparison.Ordinal) == true;
 
     internal static string ComputeFileSha256(string filePath)
     {

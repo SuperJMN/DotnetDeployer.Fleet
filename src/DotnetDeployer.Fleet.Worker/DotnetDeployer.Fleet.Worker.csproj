@@ -21,6 +21,7 @@
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="..\DotnetDeployer.Fleet.Core\DotnetDeployer.Fleet.Core.csproj" />
+    <ProjectReference Include="..\DotnetDeployer.Fleet.Feeds\DotnetDeployer.Fleet.Feeds.csproj" />
   </ItemGroup>
   <ItemGroup>
     <InternalsVisibleTo Include="DotnetDeployer.Fleet.Tests" />
