@@ -62,24 +62,24 @@ internal static class SolutionTestRunner
         IStreamingProcessRunner processRunner,
         CancellationToken ct = default)
     {
-        string solution;
+        RootSolution solution;
         try
         {
-            solution = DiscoverRootSolution(workingDirectory);
+            solution = SolutionDiscovery.Discover(workingDirectory);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
             return (false, ex.Message);
         }
 
-        var solutionName = Path.GetFileName(solution);
-        await onLine($"Solution test target: {solutionName}");
+        var solutionName = Path.GetFileName(solution.Path);
+        await onLine($"Solution test target: {solutionName} ({solution.Reason})");
 
         try
         {
             var restore = DeployerRunner.CreateDotnetProcessStartInfo(
                 workingDirectory,
-                ["workload", "restore", solution],
+                ["workload", "restore", solution.Path],
                 envVars,
                 scrubKeys);
 
@@ -103,7 +103,7 @@ internal static class SolutionTestRunner
         {
             var test = DeployerRunner.CreateDotnetProcessStartInfo(
                 workingDirectory,
-                ["test", solution, "-c", "Release", "--nologo", "-m:1"],
+                ["test", solution.Path, "-c", "Release", "--nologo", "-m:1"],
                 envVars,
                 scrubKeys);
 

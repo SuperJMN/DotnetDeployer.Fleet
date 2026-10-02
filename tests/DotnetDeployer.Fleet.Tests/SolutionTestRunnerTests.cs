@@ -37,16 +37,43 @@ public sealed class SolutionTestRunnerTests : IDisposable
             .WithMessage("*found 0*Candidates: (none)*disable 'Run solution tests before deployment'*");
     }
 
-    [Fact]
-    public void Multiple_solutions_report_every_candidate()
+    [Theory]
+    [InlineData(new[] { "App.sln" }, "App.sln")]
+    [InlineData(new[] { "App.slnx" }, "App.slnx")]
+    [InlineData(new[] { "Legacy.sln", "Modern.slnx" }, "Modern.slnx")]
+    public void Unambiguous_root_solution_is_chosen_preferring_slnx(string[] files, string expected)
     {
-        File.WriteAllText(Path.Combine(repositoryRoot, "Legacy.sln"), string.Empty);
-        File.WriteAllText(Path.Combine(repositoryRoot, "Modern.slnx"), string.Empty);
+        foreach (var file in files)
+            File.WriteAllText(Path.Combine(repositoryRoot, file), string.Empty);
+
+        var solution = SolutionDiscovery.Discover(repositoryRoot);
+
+        Path.GetFileName(solution.Path).Should().Be(expected);
+        solution.Reason.Should().NotBeNullOrWhiteSpace();
+    }
+
+    [Fact]
+    public void Slnx_next_to_sln_explains_the_preference()
+    {
+        File.WriteAllText(Path.Combine(repositoryRoot, "PokemonBattleEngine.sln"), string.Empty);
+        File.WriteAllText(Path.Combine(repositoryRoot, "PokemonBattleEngine.slnx"), string.Empty);
+
+        SolutionDiscovery.Discover(repositoryRoot).Reason
+            .Should().Be(".slnx preferred over PokemonBattleEngine.sln");
+    }
+
+    [Theory]
+    [InlineData(new[] { "A.slnx", "B.slnx" }, "*at most one .slnx*found 2*A.slnx, B.slnx*")]
+    [InlineData(new[] { "A.slnx", "B.slnx", "C.sln" }, "*at most one .slnx*found 3*A.slnx, B.slnx, C.sln*")]
+    [InlineData(new[] { "A.sln", "B.sln" }, "*exactly one .slnx or .sln*found 2*A.sln, B.sln*")]
+    public void Ambiguous_root_solutions_report_every_candidate(string[] files, string message)
+    {
+        foreach (var file in files)
+            File.WriteAllText(Path.Combine(repositoryRoot, file), string.Empty);
 
         var act = () => SolutionTestRunner.DiscoverRootSolution(repositoryRoot);
 
-        act.Should().Throw<InvalidOperationException>()
-            .WithMessage("*found 2*Legacy.sln, Modern.slnx*");
+        act.Should().Throw<InvalidOperationException>().WithMessage(message);
     }
 
     [Fact]
