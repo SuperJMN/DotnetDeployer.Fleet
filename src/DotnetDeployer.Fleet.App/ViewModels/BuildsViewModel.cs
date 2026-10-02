@@ -107,8 +107,10 @@ public partial class BuildsViewModel : ReactiveObject, IHaveHeader, IDisposable
         var projects = await projectsTask;
         var jobs = await jobsTask;
         var projectNames = projects.ToDictionary(project => project.Id, project => project.Name);
-        var projectIcons = await LoadProjectIcons(client, jobs);
 
+        // Show the builds right away. Icons can take long to resolve on the coordinator the
+        // first time, so they are filled in afterwards instead of holding the whole list.
+        // Continuations stay on the caller's (UI) context, so rows can be updated directly.
         ObservableCollectionSync.Sync(
             Builds,
             jobs.OrderByDescending(job => job.EnqueuedAt),
@@ -122,15 +124,24 @@ public partial class BuildsViewModel : ReactiveObject, IHaveHeader, IDisposable
                 fileSystemPicker: fileSystemPicker,
                 projectName: ResolveProjectName(job.ProjectId, projectNames),
                 clientContext: clientContext,
-                notificationService: notificationService)
-            {
-                ProjectIconBytes = ResolveProjectIcon(job.ProjectId, projectIcons)
-            },
-            (viewModel, job) =>
-            {
-                viewModel.ApplyJobUpdate(job, ResolveProjectName(job.ProjectId, projectNames));
-                viewModel.ProjectIconBytes = ResolveProjectIcon(job.ProjectId, projectIcons);
-            });
+                notificationService: notificationService),
+            (viewModel, job) => viewModel.ApplyJobUpdate(job, ResolveProjectName(job.ProjectId, projectNames)));
+
+        IsLoading = false;
+        await LoadProjectIconsAsync(client, jobs);
+    }
+
+    private async Task LoadProjectIconsAsync(FleetApiClient client, IEnumerable<DeploymentJob> jobs)
+    {
+        await Task.WhenAll(jobs.Select(job => job.ProjectId).Distinct().Select(async projectId =>
+        {
+            var icon = await TryLoadProjectIcon(client, projectId);
+            if (icon is null)
+                return;
+
+            foreach (var build in Builds.Where(build => build.Job.ProjectId == projectId))
+                build.ProjectIconBytes = icon;
+        }));
     }
 
     private static string ResolveProjectName(Guid projectId, IReadOnlyDictionary<Guid, string> projectNames)
@@ -138,18 +149,6 @@ public partial class BuildsViewModel : ReactiveObject, IHaveHeader, IDisposable
         return projectNames.TryGetValue(projectId, out var name)
             ? name
             : $"Project {projectId.ToString("N")[..8]}";
-    }
-
-    private static byte[]? ResolveProjectIcon(Guid projectId, IReadOnlyDictionary<Guid, byte[]?> projectIcons) =>
-        projectIcons.TryGetValue(projectId, out var icon) ? icon : null;
-
-    private static async Task<IReadOnlyDictionary<Guid, byte[]?>> LoadProjectIcons(FleetApiClient client, IEnumerable<DeploymentJob> jobs)
-    {
-        var projectIds = jobs.Select(job => job.ProjectId).Distinct().ToArray();
-        var icons = await Task.WhenAll(projectIds.Select(async projectId =>
-            new KeyValuePair<Guid, byte[]?>(projectId, await TryLoadProjectIcon(client, projectId))));
-
-        return icons.ToDictionary(pair => pair.Key, pair => pair.Value);
     }
 
     private static async Task<byte[]?> TryLoadProjectIcon(FleetApiClient client, Guid projectId)

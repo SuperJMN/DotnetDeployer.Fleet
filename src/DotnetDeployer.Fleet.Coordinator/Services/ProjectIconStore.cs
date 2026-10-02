@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using DotnetDeployer.Fleet.Core.Domain;
 using DotnetProjectKit;
 using Microsoft.Extensions.Logging;
@@ -9,8 +10,13 @@ public sealed record ProjectIcon(byte[] Bytes, string ContentType, string Extens
 public sealed class ProjectIconStore
 {
     internal const long MaxIconBytes = 1_000_000;
+    private const string NoIconMarker = "none";
+    private const string FailedMarker = "failed";
+    // A failed clone (network, credentials) is retried after this; "no icon" waits for the next commit.
+    internal static readonly TimeSpan FailedLookupRetry = TimeSpan.FromHours(1);
     private readonly string rootDir;
     private readonly ILogger<ProjectIconStore> logger;
+    private readonly ConcurrentDictionary<Guid, Lazy<Task<ProjectIcon?>>> resolving = new();
 
     public ProjectIconStore(string rootDir, ILogger<ProjectIconStore> logger)
     {
@@ -23,21 +29,44 @@ public sealed class ProjectIconStore
         var cached = await TryReadCached(project.Id, ct);
         if (cached is not null)
             return cached;
+        if (HasFreshMissMarker(project.Id))
+            return null;
 
+        // Resolving clones the repository, which can take a minute on small hosts. Concurrent
+        // requests for the same project share one resolution instead of cloning in parallel.
+        var resolution = resolving.GetOrAdd(project.Id,
+            _ => new Lazy<Task<ProjectIcon?>>(() => Resolve(project)));
+        try
+        {
+            return await resolution.Value.WaitAsync(ct);
+        }
+        finally
+        {
+            if (resolution.Value.IsCompleted)
+                resolving.TryRemove(new KeyValuePair<Guid, Lazy<Task<ProjectIcon?>>>(project.Id, resolution));
+        }
+    }
+
+    private async Task<ProjectIcon?> Resolve(Project project)
+    {
         var tempDir = Path.Combine(Path.GetTempPath(), "dotnetfleet-project-icons", $"{project.Id:N}-{Guid.NewGuid():N}");
         try
         {
-            await ProjectRepositoryCheckout.CloneShallow(project, tempDir, ct);
-            var icon = await ResolveFromCheckout(project, tempDir, ct);
+            await ProjectRepositoryCheckout.CloneShallow(project, tempDir, CancellationToken.None);
+            var icon = await ResolveFromCheckout(project, tempDir, CancellationToken.None);
             if (icon is null)
+            {
+                await WriteMissMarker(project.Id, NoIconMarker);
                 return null;
+            }
 
-            await Cache(project.Id, icon, ct);
+            await Cache(project.Id, icon);
             return icon;
         }
-        catch (Exception ex) when (ex is not OperationCanceledException)
+        catch (Exception ex)
         {
             logger.LogWarning(ex, "Project icon autodetection failed for {ProjectName}", project.Name);
+            await WriteMissMarker(project.Id, FailedMarker);
             return null;
         }
         finally
@@ -51,6 +80,30 @@ public sealed class ProjectIconStore
             {
                 // Best-effort cleanup. Icon discovery is advisory.
             }
+        }
+    }
+
+    private bool HasFreshMissMarker(Guid projectId)
+    {
+        var directory = AutoDirectory(projectId);
+        if (File.Exists(Path.Combine(directory, NoIconMarker)))
+            return true;
+
+        var failed = new FileInfo(Path.Combine(directory, FailedMarker));
+        return failed.Exists && DateTime.UtcNow - failed.LastWriteTimeUtc < FailedLookupRetry;
+    }
+
+    private async Task WriteMissMarker(Guid projectId, string marker)
+    {
+        try
+        {
+            var directory = AutoDirectory(projectId);
+            Directory.CreateDirectory(directory);
+            await File.WriteAllTextAsync(Path.Combine(directory, marker), DateTimeOffset.UtcNow.ToString("O"));
+        }
+        catch (Exception ex)
+        {
+            logger.LogDebug(ex, "Could not record missing icon for project {ProjectId}", projectId);
         }
     }
 
@@ -91,6 +144,8 @@ public sealed class ProjectIconStore
     internal async Task Cache(Guid projectId, ProjectIcon icon, CancellationToken ct = default)
     {
         await WriteIcon(AutoDirectory(projectId), icon, ct);
+        File.Delete(Path.Combine(AutoDirectory(projectId), NoIconMarker));
+        File.Delete(Path.Combine(AutoDirectory(projectId), FailedMarker));
 
         var legacyDirectory = ProjectDirectory(projectId);
         if (Directory.Exists(legacyDirectory))
