@@ -1,4 +1,5 @@
 using System.Reactive;
+using System.Reflection;
 using System.Reactive.Disposables;
 using System.Reactive.Linq;
 using CSharpFunctionalExtensions;
@@ -38,6 +39,8 @@ public partial class AppShellViewModel : ReactiveObject, IDisposable
                 BackendHealthMessage = s.Message;
                 BackendVersion = s.Version;
                 this.RaisePropertyChanged(nameof(BackendDisplayVersion));
+                this.RaisePropertyChanged(nameof(VersionsDiffer));
+                this.RaisePropertyChanged(nameof(VersionMismatchMessage));
                 BackendEndpoint = s.Endpoint?.ToString().TrimEnd('/');
             });
         _disposables.Add(sub);
@@ -57,6 +60,16 @@ public partial class AppShellViewModel : ReactiveObject, IDisposable
     public IShell Shell { get; }
     public ReactiveCommand<Unit, Maybe<Result<FleetApiClient>>> ReconnectCommand { get; }
     public string? BackendDisplayVersion => VersionDisplay.VisibleWithPrefix(BackendVersion);
+
+    public string? AppVersion { get; } = typeof(AppShellViewModel).Assembly
+        .GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion;
+
+    public string? AppDisplayVersion => VersionDisplay.VisibleWithPrefix(AppVersion);
+    public bool VersionsDiffer => VersionDisplay.Differ(AppVersion, BackendVersion);
+
+    public string? VersionMismatchMessage => VersionsDiffer
+        ? $"This app ({AppDisplayVersion}) and the coordinator ({BackendDisplayVersion}) run different versions. Update the older one so they match."
+        : null;
 
     public void Dispose() => _disposables.Dispose();
 }
