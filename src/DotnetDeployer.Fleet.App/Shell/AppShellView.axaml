@@ -39,14 +39,30 @@
                                    Opacity="0.7"
                                    TextTrimming="CharacterEllipsis"
                                    Text="{Binding BackendEndpoint}" />
-                        <TextBlock Grid.Column="3"
-                                   Margin="8,0"
-                                   VerticalAlignment="Center"
-                                   Opacity="0.6"
-                                   FontSize="11"
-                                   Text="{Binding BackendDisplayVersion}"
-                                   ToolTip.Tip="{Binding BackendVersion}"
-                                   IsVisible="{Binding BackendVersion, Converter={x:Static ObjectConverters.IsNotNull}}" />
+                        <StackPanel Grid.Column="3"
+                                    Margin="8,0"
+                                    Orientation="Horizontal"
+                                    Spacing="10"
+                                    VerticalAlignment="Center">
+                            <ContentControl Content="{Icon mdi-alert}"
+                                            IconOptions.Size="14"
+                                            IconOptions.Fill="#F0B72F"
+                                            VerticalAlignment="Center"
+                                            ToolTip.Tip="{Binding VersionMismatchMessage}"
+                                            IsVisible="{Binding VersionsDiffer}" />
+                            <TextBlock VerticalAlignment="Center"
+                                       Opacity="0.6"
+                                       FontSize="11"
+                                       Text="{Binding AppDisplayVersion, StringFormat='GUI {0}'}"
+                                       ToolTip.Tip="{Binding AppVersion}"
+                                       IsVisible="{Binding AppVersion, Converter={x:Static ObjectConverters.IsNotNull}}" />
+                            <TextBlock VerticalAlignment="Center"
+                                       Opacity="0.6"
+                                       FontSize="11"
+                                       Text="{Binding BackendDisplayVersion, StringFormat='Coordinator {0}'}"
+                                       ToolTip.Tip="{Binding BackendVersion}"
+                                       IsVisible="{Binding BackendVersion, Converter={x:Static ObjectConverters.IsNotNull}}" />
+                        </StackPanel>
                         <TextBlock Grid.Column="4"
                                    VerticalAlignment="Center"
                                    Opacity="0.6"

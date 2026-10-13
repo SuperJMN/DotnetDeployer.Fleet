@@ -22,4 +22,16 @@ public class VersionDisplayTests
         VersionDisplay.VisibleWithPrefix("").Should().BeEmpty();
         VersionDisplay.VisibleWithPrefix("1.2.3+abcdef").Should().Be("v1.2.3");
     }
+
+    [Theory]
+    [InlineData("0.1.32+f0993c19", "0.1.38+d1c1afdb", true)]
+    [InlineData("0.1.38+f0993c19", "0.1.38+d1c1afdb", false)]
+    [InlineData("0.1.38", "0.1.38", false)]
+    [InlineData("0.1.38", null, false)]
+    [InlineData(null, "0.1.38", false)]
+    [InlineData("", "0.1.38", false)]
+    public void Differ_reports_only_known_versions_that_differ(string? version, string? other, bool expected)
+    {
+        VersionDisplay.Differ(version, other).Should().Be(expected);
+    }
 }
