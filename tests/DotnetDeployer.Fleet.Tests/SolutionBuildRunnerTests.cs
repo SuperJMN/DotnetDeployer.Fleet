@@ -37,14 +37,65 @@ public sealed class SolutionBuildRunnerTests : IDisposable
             processRunner);
 
         result.Success.Should().BeTrue();
-        processRunner.Commands.Should().HaveCount(2);
-        processRunner.Commands[0].Arguments.Should().Equal("workload", "restore", solution);
-        processRunner.Commands[1].Arguments.Should().Equal(
+        processRunner.Commands.Should().HaveCount(3);
+        processRunner.Commands[0].Arguments.Take(6).Should().Equal(
+            "dnx", "dotnetdeployer.tool", "-y", "prepare", "--directory", repositoryRoot);
+        processRunner.Commands[1].Arguments.Should().Equal("workload", "restore", solution);
+        processRunner.Commands[2].Arguments.Should().Equal(
             "build", solution, "-c", "Release", "--nologo");
         processRunner.Commands.Should().OnlyContain(command => command.WorkingDirectory == repositoryRoot);
         processRunner.Commands.Should().OnlyContain(command => command.Environment["PRIVATE_FEED_TOKEN"] == "token123");
         processRunner.Commands.Should().OnlyContain(command => !command.Environment.ContainsKey("NUGET_API_KEY"));
         lines.Should().Contain(line => line.Contains("continuing to dotnet build", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task Prepared_toolchain_reaches_workload_restore_and_build()
+    {
+        File.WriteAllText(Path.Combine(repositoryRoot, "App.slnx"), string.Empty);
+        var processRunner = new RecordingProcessRunner(restoreExitCode: 0, buildExitCode: 0)
+        {
+            Toolchain = new Dictionary<string, string>
+            {
+                ["JAVA_HOME"] = "/home/fleet/.dotnet-android-jdk/jdk-17",
+                ["ANDROID_HOME"] = "/home/fleet/.android-sdk"
+            }
+        };
+
+        var result = await SolutionBuildRunner.RunAsync(
+            repositoryRoot,
+            _ => Task.CompletedTask,
+            envVars: null,
+            scrubKeys: null,
+            processRunner);
+
+        result.Success.Should().BeTrue();
+        processRunner.Commands.Skip(1).Should().OnlyContain(command =>
+            command.Environment["JAVA_HOME"] == "/home/fleet/.dotnet-android-jdk/jdk-17"
+            && command.Environment["ANDROID_HOME"] == "/home/fleet/.android-sdk");
+    }
+
+    [Fact]
+    public async Task Failing_prepare_warns_and_still_builds()
+    {
+        File.WriteAllText(Path.Combine(repositoryRoot, "App.slnx"), string.Empty);
+        var processRunner = new RecordingProcessRunner(restoreExitCode: 0, buildExitCode: 0) { PrepareExitCode = 1 };
+        var lines = new List<string>();
+
+        var result = await SolutionBuildRunner.RunAsync(
+            repositoryRoot,
+            line =>
+            {
+                lines.Add(line);
+                return Task.CompletedTask;
+            },
+            envVars: null,
+            scrubKeys: null,
+            processRunner);
+
+        result.Success.Should().BeTrue();
+        processRunner.Commands.Should().HaveCount(3);
+        lines.Should().Contain(line => line.Contains("continuing without prepared toolchains", StringComparison.Ordinal));
     }
 
     [Fact]
@@ -217,6 +268,8 @@ public sealed class SolutionBuildRunnerTests : IDisposable
         }
 
         public List<CapturedCommand> Commands { get; } = [];
+        public Dictionary<string, string> Toolchain { get; init; } = [];
+        public int PrepareExitCode { get; init; }
 
         public async Task<int> RunAsync(
             ProcessStartInfo startInfo,
@@ -228,6 +281,14 @@ public sealed class SolutionBuildRunnerTests : IDisposable
                 startInfo.ArgumentList.ToList(),
                 startInfo.Environment.ToDictionary(pair => pair.Key, pair => pair.Value ?? string.Empty)));
             await onLine($"process output {Commands.Count}");
+
+            if (startInfo.ArgumentList.Contains("prepare"))
+            {
+                var envFile = startInfo.ArgumentList[startInfo.ArgumentList.IndexOf("--env-file") + 1];
+                File.WriteAllLines(envFile, Toolchain.Select(pair => $"{pair.Key}={pair.Value}"));
+                return PrepareExitCode;
+            }
+
             return exitCodes.Dequeue();
         }
     }
