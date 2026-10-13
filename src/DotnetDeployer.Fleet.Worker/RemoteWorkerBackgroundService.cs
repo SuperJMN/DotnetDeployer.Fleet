@@ -1017,6 +1017,18 @@ public class RemoteWorkerBackgroundService : BackgroundService
                     push = (false, $"Ambiguous push response: {ex.Message}");
                 }
 
+                // A rejected API key cannot fix itself while the feed indexes: fail now with a
+                // clear cause instead of waiting for a package that was never received.
+                if (NuGetPackagePusher.IsAuthorizationRejection(push.Error))
+                {
+                    await jobSource.SetNuGetReleasePackageStateAsync(job.Id, sha, item.Package.Id,
+                        NuGetReleasePackageState.Incomplete, push.Error!, token);
+                    var secretName = string.IsNullOrWhiteSpace(release.Manifest.ApiKeySecretName)
+                        ? "NUGET_API_KEY"
+                        : release.Manifest.ApiKeySecretName;
+                    return (false, $"{push.Error} Update the '{secretName}' secret and redeploy this commit; the packages already built are reused.", false);
+                }
+
                 // A duplicate rejection means the feed already holds this ID/version, typically
                 // from an earlier attempt that is still indexing. Background verification decides
                 // whether those bytes are ours.

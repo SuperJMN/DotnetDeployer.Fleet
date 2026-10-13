@@ -47,6 +47,12 @@ final feed check; if the package is still unavailable, it marks the deployment f
 and requires manual recovery.
 Older failed jobs created before this change still use the legacy retry path.
 
+A push the feed rejects with HTTP 401 or 403 is not ambiguous: the API key has expired,
+lacks push permission, or its glob pattern does not cover the package. Fleet marks that
+package `Incomplete` and fails the deployment at once with that cause instead of waiting
+for indexing. Update the API key secret, then redeploy the same commit as described
+below; the stored packages are reused.
+
 For `Publishing`, `AwaitingIndex`, or `Incomplete`, an administrator can also POST
 `/api/projects/{projectId}/deploy` with
 `{"commitSha":"<full manifest SHA>"}` to queue another job for the **same project and

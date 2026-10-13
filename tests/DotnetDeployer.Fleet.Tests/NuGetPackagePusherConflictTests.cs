@@ -168,6 +168,36 @@ public sealed class NuGetPackagePusherConflictTests : IDisposable
         result.Error.Should().Contain("HTTP 409");
     }
 
+    [Theory]
+    [InlineData("error: Response status code does not indicate success: 403 (The specified API key is invalid, has expired, or does not have permission to access the specified package.).", 403)]
+    [InlineData("  Unauthorized https://nuget.example.com/v3/package/ 98 ms", 401)]
+    public async Task Push_to_remote_feed_reports_a_rejected_api_key(string feedLine, int expectedStatus)
+    {
+        var workDir = CreateTempDir("work");
+        var pkgPath = Path.Combine(workDir, "MyPackage.1.0.0.nupkg");
+        await File.WriteAllBytesAsync(pkgPath, [1, 2, 3]);
+
+        var fakeRunner = new FakeStreamingProcessRunner(async (_, onLine) =>
+        {
+            await onLine("  PUT https://nuget.example.com/v3/package/");
+            await onLine(feedLine);
+            return 1;
+        });
+
+        var result = await NuGetPackagePusher.PushAsync(
+            workDir,
+            pkgPath,
+            "test-key",
+            "https://nuget.example.com/v3/index.json",
+            _ => Task.CompletedTask,
+            fakeRunner);
+
+        result.Success.Should().BeFalse();
+        NuGetPackagePusher.IsAuthorizationRejection(result.Error).Should().BeTrue();
+        NuGetPackagePusher.IsDuplicateRejection(result.Error).Should().BeFalse();
+        result.Error.Should().Contain($"HTTP {expectedStatus}");
+    }
+
     [Fact]
     public async Task Push_to_remote_feed_fails_closed_if_duplicate_detected_even_on_zero_exit()
     {
