@@ -546,6 +546,7 @@ public sealed class ReleaseJobsStagingDemonstrationTests : IDisposable
     [InlineData("ambiguous-timeout", true, NuGetReleasePackageState.Complete)]
     [InlineData("accepted-before-indexing", true, NuGetReleasePackageState.AwaitingVerification)]
     [InlineData("indexing-409", true, NuGetReleasePackageState.AwaitingVerification)]
+    [InlineData("api-key-rejected", false, NuGetReleasePackageState.Incomplete)]
     public async Task Push_outcomes_use_acceptance_or_verified_download_when_response_is_ambiguous(
         string scenario, bool shouldSucceed, NuGetReleasePackageState expectedState)
     {
@@ -572,6 +573,8 @@ public sealed class ReleaseJobsStagingDemonstrationTests : IDisposable
                 return (true, (string?)null);
             if (scenario == "indexing-409")
                 return (false, "Duplicate on feed: Package 'DemoLib.1.0.0.nupkg' returned HTTP 409.");
+            if (scenario == "api-key-rejected")
+                return (false, "API key rejected: 'feed' rejected the API key for 'DemoLib.1.0.0.nupkg' (HTTP 403).");
 
             File.Copy(package, destination);
             if (scenario == "conflicting-409")
@@ -603,6 +606,13 @@ public sealed class ReleaseJobsStagingDemonstrationTests : IDisposable
             await retryWorker.ExecuteJobAsync(job, CancellationToken.None);
             (await storage.GetJobAsync(job.Id))!.Status.Should().Be(JobStatus.Succeeded);
             repeatedPushes.Should().Be(0);
+        }
+        else if (scenario == "api-key-rejected")
+        {
+            // A rejected key fails at once instead of waiting for a package the feed never received.
+            Directory.GetFiles(feed, "*.nupkg", SearchOption.AllDirectories).Should().BeEmpty();
+            (await storage.GetJobAsync(job.Id))!.ErrorMessage.Should().Contain("rejected the API key")
+                .And.Contain("redeploy this commit");
         }
         else if (scenario == "indexing-409")
         {

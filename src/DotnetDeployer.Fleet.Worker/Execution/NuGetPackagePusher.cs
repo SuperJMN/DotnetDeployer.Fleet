@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Security.Cryptography;
+using System.Text.RegularExpressions;
 
 namespace DotnetDeployer.Fleet.WorkerService.Execution;
 
@@ -71,9 +72,12 @@ internal static class NuGetPackagePusher
             scrubKeys: NonNuGetPublishSecrets);
 
         var duplicateConflictDetected = false;
+        int? authorizationStatus = null;
 
         var exitCode = await processRunner.RunAsync(psi, async line =>
         {
+            authorizationStatus ??= TryParseAuthorizationStatus(line);
+
             if (line.Contains("already exists", StringComparison.OrdinalIgnoreCase) ||
                 line.Contains("Conflict", StringComparison.OrdinalIgnoreCase) ||
                 line.Contains("409", StringComparison.Ordinal))
@@ -89,6 +93,13 @@ internal static class NuGetPackagePusher
 
         if (exitCode != 0)
         {
+            if (authorizationStatus is { } status)
+            {
+                var rejected = $"{AuthorizationRejectionPrefix}'{source}' rejected the API key for '{packageFileName}' (HTTP {status}). Check that the key has not expired, can push new packages and package versions, and that its glob pattern covers this package.";
+                await onLine($"[nuget.push] HTTP {status}: {rejected}");
+                return (false, rejected);
+            }
+
             if (duplicateConflictDetected)
             {
                 var unverified = $"{DuplicateRejectionPrefix}Package '{packageFileName}' returned HTTP 409 from '{source}'; its remote contents must be verified after it becomes downloadable.";
@@ -128,6 +139,30 @@ internal static class NuGetPackagePusher
     }
 
     private const string DuplicateRejectionPrefix = "Duplicate on feed: ";
+    private const string AuthorizationRejectionPrefix = "API key rejected: ";
+
+    private static readonly Regex AuthorizationStatusLine = new(
+        @"status code does not indicate success:\s*(?<code>401|403)\b|^\s*(?<word>Unauthorized|Forbidden)\s+https?://",
+        RegexOptions.IgnoreCase);
+
+    /// <summary>
+    /// True when the feed refused the push because of the API key (HTTP 401/403). Unlike a
+    /// timeout or an ambiguous response, this cannot resolve itself while the feed indexes.
+    /// </summary>
+    internal static bool IsAuthorizationRejection(string? error) =>
+        error?.StartsWith(AuthorizationRejectionPrefix, StringComparison.Ordinal) == true;
+
+    private static int? TryParseAuthorizationStatus(string line)
+    {
+        var match = AuthorizationStatusLine.Match(line);
+        if (!match.Success)
+            return null;
+
+        if (match.Groups["code"].Success)
+            return int.Parse(match.Groups["code"].Value);
+
+        return string.Equals(match.Groups["word"].Value, "Unauthorized", StringComparison.OrdinalIgnoreCase) ? 401 : 403;
+    }
 
     /// <summary>True when the feed refused the push because it already holds this ID/version.</summary>
     internal static bool IsDuplicateRejection(string? error) =>
