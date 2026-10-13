@@ -55,6 +55,14 @@ internal static class SolutionBuildRunner
         var solutionName = Path.GetFileName(solution.Path);
         await onLine($"Solution build target: {solutionName} ({solution.Reason})");
 
+        envVars = await ToolchainPreparer.PrepareAsync(
+            workingDirectory,
+            onLine,
+            envVars,
+            scrubKeys,
+            processRunner,
+            ct);
+
         try
         {
             var restore = DeployerRunner.CreateDotnetProcessStartInfo(

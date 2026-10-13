@@ -96,14 +96,16 @@ public sealed class SolutionTestRunnerTests : IDisposable
             processRunner);
 
         result.Success.Should().BeTrue();
-        processRunner.Commands.Should().HaveCount(2);
-        processRunner.Commands[0].Arguments.Should().Equal("workload", "restore", solution);
-        processRunner.Commands[1].Arguments.Should().Equal(
+        processRunner.Commands.Should().HaveCount(3);
+        processRunner.Commands[0].Arguments.Take(6).Should().Equal(
+            "dnx", "dotnetdeployer.tool", "-y", "prepare", "--directory", repositoryRoot);
+        processRunner.Commands[1].Arguments.Should().Equal("workload", "restore", solution);
+        processRunner.Commands[2].Arguments.Should().Equal(
             "test", solution, "-c", "Release", "--nologo", "-m:1");
         processRunner.Commands.Should().OnlyContain(command => command.WorkingDirectory == repositoryRoot);
         processRunner.Commands.Should().OnlyContain(command => command.Environment["DEPLOY_TOKEN"] == "secret-value");
         processRunner.Commands.Should().OnlyContain(command => command.Environment["UseSharedCompilation"] == "false");
-        lines.Should().ContainInOrder("process output 1", "process output 2");
+        lines.Should().ContainInOrder("process output 1", "process output 2", "process output 3");
         lines.Should().Contain(line => line.Contains("continuing to dotnet test", StringComparison.Ordinal));
     }
 
@@ -138,6 +140,8 @@ public sealed class SolutionTestRunnerTests : IDisposable
         }
 
         public List<CapturedCommand> Commands { get; } = [];
+        public Dictionary<string, string> Toolchain { get; init; } = [];
+        public int PrepareExitCode { get; init; }
 
         public async Task<int> RunAsync(
             ProcessStartInfo startInfo,
@@ -149,6 +153,14 @@ public sealed class SolutionTestRunnerTests : IDisposable
                 startInfo.ArgumentList.ToList(),
                 startInfo.Environment.ToDictionary(pair => pair.Key, pair => pair.Value ?? string.Empty)));
             await onLine($"process output {Commands.Count}");
+
+            if (startInfo.ArgumentList.Contains("prepare"))
+            {
+                var envFile = startInfo.ArgumentList[startInfo.ArgumentList.IndexOf("--env-file") + 1];
+                File.WriteAllLines(envFile, Toolchain.Select(pair => $"{pair.Key}={pair.Value}"));
+                return PrepareExitCode;
+            }
+
             return exitCodes.Dequeue();
         }
     }
