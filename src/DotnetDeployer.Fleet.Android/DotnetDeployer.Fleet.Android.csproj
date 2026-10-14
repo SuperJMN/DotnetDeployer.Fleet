@@ -25,6 +25,10 @@
     <TrimMode>none</TrimMode>
     <RunAOTCompilation>false</RunAOTCompilation>
     <EnableAssemblyILStripping>false</EnableAssemblyILStripping>
+    <!-- Release APKs built by the Fleet worker shipped Java stubs that expect marshal methods
+         while libxamarin-app.so had none, so the app died at startup with UnsatisfiedLinkError
+         on AvaloniaAndroidApplication_1.n_onCreate. Dynamic registration avoids that mismatch. -->
+    <AndroidEnableMarshalMethods>false</AndroidEnableMarshalMethods>
   </PropertyGroup>
 
   <ItemGroup>
