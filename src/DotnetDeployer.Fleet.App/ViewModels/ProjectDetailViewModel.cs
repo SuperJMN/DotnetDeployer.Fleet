@@ -29,7 +29,6 @@ public partial class ProjectDetailViewModel : ReactiveObject, IHaveHeader, IDisp
     private readonly BehaviorSubject<object> _header;
 
     public Project Project { get; private set; }
-    public ProjectSecretsViewModel ProjectSecrets { get; }
     public PackageBuildOptionsViewModel BuildOptions { get; }
 
     [Reactive] private bool _isLoading;
@@ -55,7 +54,6 @@ public partial class ProjectDetailViewModel : ReactiveObject, IHaveHeader, IDisp
         _fileSystemPicker = fileSystemPicker;
         _dialog = dialog;
         this.notificationService = notificationService;
-        ProjectSecrets = new ProjectSecretsViewModel(project.Id, client, clientContext, notificationService);
         BuildOptions = new PackageBuildOptionsViewModel(project.Id, clientContext);
 
         RefreshCommand = ReactiveCommand.CreateFromTask(LoadJobs);
@@ -65,6 +63,10 @@ public partial class ProjectDetailViewModel : ReactiveObject, IHaveHeader, IDisp
         EditCommand = ReactiveCommand.Create(() =>
         {
             _navigator.Go(() => new EditProjectViewModel(Project, _client, _navigator, projectsForRefresh: null));
+        });
+        OpenSecretsCommand = ReactiveCommand.Create(() =>
+        {
+            _navigator.Go(() => new ProjectSecretsViewModel(Project.Id, Project.Name, _client, clientContext, notificationService));
         });
 
         _disposables.Add(RefreshCommand.Results().HandleErrorsWith(notificationService, Maybe.From("Cannot load project")));
@@ -85,7 +87,7 @@ public partial class ProjectDetailViewModel : ReactiveObject, IHaveHeader, IDisp
             new HeaderAction("Queue Build", "mdi-package-variant-closed", BuildPackagesCommand, isPrimary: true),
             new HeaderAction("Clear Builds", "mdi-broom", ClearFinishedJobsCommand),
             new HeaderAction("Refresh", "mdi-refresh", RefreshCommand),
-            new HeaderAction("Project Secrets", "mdi-dots-horizontal", ProjectSecrets),
+            new HeaderAction("Project Secrets", "mdi-key-outline", OpenSecretsCommand),
             new HeaderAction("Edit", "mdi-pencil", EditCommand));
 
     public ReactiveCommand<Unit, Maybe<Result>> RefreshCommand { get; }
@@ -93,11 +95,11 @@ public partial class ProjectDetailViewModel : ReactiveObject, IHaveHeader, IDisp
     public ReactiveCommand<Unit, Maybe<Result>> BuildPackagesCommand { get; }
     public ReactiveCommand<Unit, Maybe<Result>> ClearFinishedJobsCommand { get; }
     public ReactiveCommand<Unit, Unit> EditCommand { get; }
+    public ReactiveCommand<Unit, Unit> OpenSecretsCommand { get; }
     public IObservable<object> Header { get; }
     public void Dispose()
     {
         _disposables.Dispose();
-        ProjectSecrets.Dispose();
         _header.Dispose();
     }
 
@@ -178,7 +180,7 @@ public partial class ProjectDetailViewModel : ReactiveObject, IHaveHeader, IDisp
                     queueCommand.Enhance(),
                     new Settings { IsDefault = true, Role = OptionRole.Primary }),
             };
-        }, size: DialogSize.Wide);
+        });
 
         return result;
     }
@@ -551,6 +553,8 @@ public partial class JobViewModel : ReactiveObject
 
     public string TimestampText => LocalTimestampFormatter.Format(Job.FinishedAt ?? Job.EnqueuedAt);
 
+    public string? ShortCommitSha => Job.TriggerCommitSha is { Length: > 0 } sha ? sha[..Math.Min(7, sha.Length)] : null;
+
     /// <summary>
     /// Pushes a fresher snapshot of the underlying <see cref="DeploymentJob"/> into this VM,
     /// raising change notifications for the user-visible fields. Used when the deployment is
@@ -573,6 +577,7 @@ public partial class JobViewModel : ReactiveObject
         this.RaisePropertyChanged(nameof(KindText));
         this.RaisePropertyChanged(nameof(TimestampLabel));
         this.RaisePropertyChanged(nameof(TimestampText));
+        this.RaisePropertyChanged(nameof(ShortCommitSha));
         RefreshElapsed();
     }
 

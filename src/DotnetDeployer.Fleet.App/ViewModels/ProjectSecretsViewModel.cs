@@ -8,10 +8,11 @@ using DotnetDeployer.Fleet.Core.Domain;
 using ReactiveUI;
 using ReactiveUI.SourceGenerators;
 using Zafiro.UI;
+using Zafiro.UI.Navigation;
 
 namespace DotnetDeployer.Fleet.App.ViewModels;
 
-public partial class ProjectSecretsViewModel : ReactiveObject, IDisposable
+public partial class ProjectSecretsViewModel : ReactiveObject, IHaveHeader, IDisposable
 {
     private readonly FleetApiClient _client;
     private readonly IConnectedFleetClientContext clientContext;
@@ -27,6 +28,7 @@ public partial class ProjectSecretsViewModel : ReactiveObject, IDisposable
 
     public ProjectSecretsViewModel(
         Guid projectId,
+        string projectName,
         FleetApiClient client,
         IConnectedFleetClientContext clientContext,
         INotificationService notificationService)
@@ -43,10 +45,15 @@ public partial class ProjectSecretsViewModel : ReactiveObject, IDisposable
 
         _disposables.Add(RefreshCommand.Results().HandleErrorsWith(notificationService, Maybe.From("Cannot load project secrets")));
         _disposables.Add(AddCommand.ThrownExceptions.Subscribe(ex => Error = ex.Message));
+
+        Header = Observable.Return<object>(new SectionHeader("Project Secrets",
+            $"{projectName} · overrides global secrets",
+            new HeaderAction("Refresh", "mdi-refresh", RefreshCommand)));
     }
 
     public ReactiveCommand<Unit, Maybe<Result>> RefreshCommand { get; }
     public ReactiveCommand<Unit, Unit> AddCommand { get; }
+    public IObservable<object> Header { get; }
     public void Dispose() => _disposables.Dispose();
 
     private async Task<Maybe<Result>> Load()

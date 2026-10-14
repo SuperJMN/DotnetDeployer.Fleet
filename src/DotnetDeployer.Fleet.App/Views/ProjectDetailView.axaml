@@ -48,65 +48,7 @@
 
             <ScrollViewer HorizontalScrollBarVisibility="Disabled"
                           IsVisible="{Binding HasJobHistory}">
-                <ItemsControl ItemsSource="{Binding Jobs}">
-                    <ItemsControl.ItemTemplate>
-                        <DataTemplate DataType="vm:JobViewModel">
-                            <Border Padding="12,8"
-                                    Margin="0,2"
-                                    Background="{DynamicResource SystemControlBackgroundAltHighBrush}"
-                                    CornerRadius="4">
-                                <FlexPanel Wrap="Wrap"
-                                           Gap="12"
-                                           AlignItems="Center">
-                                    <FlexPanel Wrap="NoWrap"
-                                               Gap="6"
-                                               AlignItems="Center"
-                                               VerticalAlignment="Center"
-                                               MinWidth="140">
-                                        <ContentControl Content="{Binding StatusIcon}"
-                                                        IconOptions.Fill="{Binding StatusBrush}"
-                                                        IconOptions.Size="16"
-                                                        VerticalAlignment="Center" />
-                                        <TextBlock Text="{Binding StatusText}"
-                                                   Foreground="{Binding StatusBrush}"
-                                                   FontWeight="SemiBold"
-                                                   VerticalAlignment="Center" />
-                                    </FlexPanel>
-
-                                    <StackPanel Spacing="2"
-                                                MinWidth="180"
-                                                FlexPanel.Grow="1">
-                                        <TextBlock FontSize="13"
-                                                   FontWeight="SemiBold"
-                                                   Text="{Binding DisplayName}"
-                                                   ToolTip.Tip="{Binding Version}" />
-                                        <TextBlock FontSize="12"
-                                                   Opacity="0.6">
-                                            <Run Text="{Binding KindText}" />
-                                            <Run Text=" · " />
-                                            <Run Text="{Binding TimestampLabel}" />
-                                            <Run Text=": " />
-                                            <Run Text="{Binding TimestampText}" />
-                                            <Run Text=" · Elapsed: " />
-                                            <Run Text="{Binding ElapsedText}" />
-                                        </TextBlock>
-                                        <TextBlock FontSize="12"
-                                                   Opacity="0.5"
-                                                   IsVisible="{Binding Job.TriggerCommitSha, Converter={x:Static ObjectConverters.IsNotNull}}">
-                                            <Run Text="SHA: " />
-                                            <Run Text="{Binding Job.TriggerCommitSha}" />
-                                        </TextBlock>
-                                    </StackPanel>
-
-                                    <EnhancedButton Content="View Status"
-                                                    Icon="{Icon mdi-format-list-checks}"
-                                                    Classes="Primary"
-                                                    Command="{Binding OpenCommand}" />
-                                </FlexPanel>
-                            </Border>
-                        </DataTemplate>
-                    </ItemsControl.ItemTemplate>
-                </ItemsControl>
+                <ItemsControl ItemsSource="{Binding Jobs}" />
             </ScrollViewer>
         </Grid>
 

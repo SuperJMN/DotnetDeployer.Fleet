@@ -71,19 +71,6 @@
                                                     IsVisible="{Binding IsSecondaryCommand}">
                                     <icons:Icon Value="{Binding IconCode}" />
                                 </zac:EnhancedButton>
-                                <zac:EnhancedButton ToolTip.Tip="{Binding Text}"
-                                                    IsVisible="{Binding HasFlyout}">
-                                    <icons:Icon Value="{Binding IconCode}" />
-                                    <Button.Flyout>
-                                        <Flyout>
-                                            <ScrollViewer MinWidth="360"
-                                                          MaxWidth="520"
-                                                          MaxHeight="560">
-                                                <ContentControl Content="{Binding FlyoutContent}" />
-                                            </ScrollViewer>
-                                        </Flyout>
-                                    </Button.Flyout>
-                                </zac:EnhancedButton>
                             </Panel>
                         </DataTemplate>
                     </ItemsControl.ItemTemplate>
