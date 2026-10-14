@@ -1,3 +1,4 @@
+using System.Reactive.Linq;
 using DotnetDeployer.Fleet.Api.Client;
 using ReactiveUI;
 using ReactiveUI.SourceGenerators;
@@ -11,7 +12,6 @@ public partial class AddProjectViewModel : ReactiveObject
     [Reactive] private string _name = string.Empty;
     [Reactive] private string _gitUrl = string.Empty;
     [Reactive] private string _branch = "main";
-    [Reactive] private string _pollingInterval = "0";
     [Reactive] private string _gitToken = string.Empty;
     [Reactive] private bool _runTestsBeforeDeploy = true;
     [Reactive] private string _expectedPackageIdsText = string.Empty;
@@ -23,9 +23,12 @@ public partial class AddProjectViewModel : ReactiveObject
         _client = client;
 
         CanSave = this.WhenAnyValue(
-            x => x.Name, x => x.GitUrl, x => x.Branch,
-            HasRequiredFields);
+                x => x.Name, x => x.GitUrl, x => x.Branch,
+                HasRequiredFields)
+            .CombineLatest(Polling.IsValid, (hasRequiredFields, isPollingValid) => hasRequiredFields && isPollingValid);
     }
+
+    public PollingIntervalViewModel Polling { get; } = new(0);
 
     public IObservable<bool> CanSave { get; }
 
@@ -41,14 +44,20 @@ public partial class AddProjectViewModel : ReactiveObject
                 return false;
             }
 
-            int polling = int.TryParse(PollingInterval, out var p) ? p : 0;
+            var polling = Polling.ToMinutes();
+            if (polling.IsFailure)
+            {
+                Error = polling.Error;
+                return false;
+            }
+
             var token = string.IsNullOrWhiteSpace(GitToken) ? null : GitToken;
             var packageIds = ExpectedPackageIdsText
                 .Split(['\r', '\n', ',', ';'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
                 .Distinct(StringComparer.OrdinalIgnoreCase)
                 .ToList();
 
-            await _client.CreateProjectAsync(Name, GitUrl, Branch, polling, token, RunTestsBeforeDeploy, packageIds);
+            await _client.CreateProjectAsync(Name, GitUrl, Branch, polling.Value, token, RunTestsBeforeDeploy, packageIds);
             return true;
         }
         catch (Exception ex)

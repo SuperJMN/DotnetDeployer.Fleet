@@ -32,6 +32,32 @@ public class AddProjectViewModelTests
     }
 
     [Fact]
+    public async Task Invalid_polling_interval_blocks_saving_with_an_error()
+    {
+        var vm = CreateViewModel();
+        vm.Name = "App";
+        vm.GitUrl = "https://github.com/example/app.git";
+        vm.Branch = "main";
+        vm.Polling.IsAutomatic = true;
+        vm.Polling.Minutes = null;
+
+        (await CurrentCanSave(vm)).Should().BeFalse();
+
+        var saved = await vm.TrySaveAsync();
+
+        saved.Should().BeFalse();
+        vm.Error.Should().Be(vm.Polling.Error);
+    }
+
+    [Fact]
+    public void New_projects_are_manual_only_by_default()
+    {
+        var vm = CreateViewModel();
+
+        vm.Polling.IsAutomatic.Should().BeFalse();
+    }
+
+    [Fact]
     public void Solution_tests_are_enabled_by_default()
     {
         var vm = CreateViewModel();
