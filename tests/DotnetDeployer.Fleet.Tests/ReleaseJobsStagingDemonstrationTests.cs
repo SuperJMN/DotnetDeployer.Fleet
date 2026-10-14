@@ -726,6 +726,57 @@ public sealed class ReleaseJobsStagingDemonstrationTests : IDisposable
     }
 
     [Fact]
+    public async Task Scenario7b_TransferTimeout_fails_the_job_instead_of_reporting_a_user_cancellation()
+    {
+        var stagingFeedDir = CreateTempDir("staging-feed-transfer-timeout");
+        var (storage, _, worker, workerService, jobSource) = await SetupCoordinatorAndWorkerAsync(stagingFeedDir);
+        var (repoDir, commitSha) = await CreateTestRepoAsync("transfer-timeout", stagingFeedDir, version: "1.0.0", tag: "v1.0.0");
+
+        var project = new Project
+        {
+            Id = Guid.NewGuid(),
+            Name = "TransferTimeoutProject",
+            GitUrl = repoDir,
+            Branch = "main",
+            RunTestsBeforeDeploy = true,
+            ExpectedPackageIds = ["DemoLib"]
+        };
+        await storage.AddProjectAsync(project);
+
+        var job = new DeploymentJob
+        {
+            Id = Guid.NewGuid(),
+            ProjectId = project.Id,
+            Kind = JobKind.Deploy,
+            TriggerCommitSha = commitSha,
+            Status = JobStatus.Assigned,
+            WorkerId = worker.Id,
+            EnqueuedAt = DateTimeOffset.UtcNow
+        };
+        await storage.AddJobAsync(job);
+
+        // Staging a package to the coordinator gives up the way HttpClient does when its timeout elapses.
+        jobSource.BeforeNuGetPackageUpload = _ => throw new TaskCanceledException(
+            "The request was canceled due to the configured HttpClient.Timeout of 30 seconds elapsing.",
+            new TimeoutException());
+
+        await workerService.ExecuteJobAsync(job, CancellationToken.None);
+
+        var finishedJob = await storage.GetJobAsync(job.Id);
+        finishedJob.Should().NotBeNull();
+        finishedJob!.Status.Should().Be(JobStatus.Failed);
+        finishedJob.CancellationRequestedAt.Should().BeNull();
+        finishedJob.ErrorMessage.Should().Contain("HttpClient.Timeout");
+        finishedJob.ErrorMessage.Should().NotContain("Cancelled by user");
+
+        var logLines = (await storage.GetLogsAsync(job.Id)).Select(l => l.Line).ToList();
+        logLines.Should().NotContain(l => l.Contains("CANCELLED by user"));
+        logLines.Should().Contain(l => l.Contains("=== FAILED: Operation timed out or was interrupted"));
+
+        Directory.GetFiles(stagingFeedDir, "*.nupkg", SearchOption.AllDirectories).Should().BeEmpty();
+    }
+
+    [Fact]
     public async Task Scenario8_HostShutdown_propagates_cancellation_without_marking_false_terminal_state()
     {
         var stagingFeedDir = CreateTempDir("staging-feed-host-shutdown");
@@ -1190,6 +1241,7 @@ public sealed class ReleaseJobsStagingDemonstrationTests : IDisposable
     {
         private readonly NuGetReleaseStore releaseStore = new(Path.Combine(Path.GetTempPath(), "fleet-release-tests", Guid.NewGuid().ToString("N")));
         public Action<Guid, PhaseEvent>? OnPhaseEvent { get; set; }
+        public Action<string>? BeforeNuGetPackageUpload { get; set; }
 
         public Task<DeploymentJob?> GetNextJobAsync(Guid workerId, CancellationToken ct = default)
             => storage.GetNextAssignedJobForWorkerAsync(workerId, ct);
@@ -1230,6 +1282,7 @@ public sealed class ReleaseJobsStagingDemonstrationTests : IDisposable
 
         public async Task UploadNuGetReleasePackageAsync(Guid jobId, string commitSha, string packageId, Stream content, CancellationToken ct = default)
         {
+            BeforeNuGetPackageUpload?.Invoke(packageId);
             var job = await storage.GetJobAsync(jobId, ct) ?? throw new InvalidOperationException();
             await releaseStore.UploadPackageAsync(job.ProjectId, commitSha, packageId, content, ct);
         }

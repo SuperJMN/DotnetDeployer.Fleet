@@ -114,6 +114,15 @@ public static class WorkerHostBuilder
             .AddHttpMessageHandler<WorkerAuthHandler>();
 
         builder.Services
+            .AddHttpClient<WorkerTransferClient>((sp, client) =>
+            {
+                var opts = sp.GetRequiredService<IOptions<WorkerOptions>>().Value;
+                client.BaseAddress = new Uri(opts.CoordinatorBaseUrl);
+                client.Timeout = TimeSpan.FromMinutes(opts.TransferTimeoutMinutes);
+            })
+            .AddHttpMessageHandler<WorkerAuthHandler>();
+
+        builder.Services
             .AddHttpClient<IWorkerJobSource, RemoteWorkerJobSource>((sp, client) =>
             {
                 var opts = sp.GetRequiredService<IOptions<WorkerOptions>>().Value;

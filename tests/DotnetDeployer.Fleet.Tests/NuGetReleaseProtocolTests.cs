@@ -88,6 +88,43 @@ public sealed class NuGetReleaseProtocolTests : IDisposable
         bytes.ToArray().Should().Equal(expected);
     }
 
+    [Fact]
+    public async Task Remote_worker_uploads_large_packages_without_the_short_request_timeout()
+    {
+        var handler = new SlowUploadHandler(TimeSpan.FromMilliseconds(300));
+        using var requests = new HttpClient(handler, disposeHandler: false)
+        {
+            BaseAddress = new Uri("https://coordinator.invalid"),
+            Timeout = TimeSpan.FromMilliseconds(100)
+        };
+        using var transfers = new HttpClient(handler, disposeHandler: false)
+        {
+            BaseAddress = new Uri("https://coordinator.invalid"),
+            Timeout = TimeSpan.FromSeconds(30)
+        };
+        var source = new RemoteWorkerJobSource(requests, NullLogger<RemoteWorkerJobSource>.Instance, new WorkerTransferClient(transfers));
+
+        await using var package = new MemoryStream(MakePackage("DemoLib", "1.0.0", "large"));
+        await source.UploadNuGetReleasePackageAsync(Guid.NewGuid(), new string('a', 40), "DemoLib", package);
+        await using var artifact = new MemoryStream([1, 2, 3]);
+        await source.UploadArtifactAsync(Guid.NewGuid(), "app.apk", artifact);
+
+        handler.CompletedUploads.Should().Be(2);
+    }
+
+    private sealed class SlowUploadHandler(TimeSpan delay) : HttpMessageHandler
+    {
+        private int completedUploads;
+        public int CompletedUploads => completedUploads;
+
+        protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
+        {
+            await Task.Delay(delay, ct);
+            Interlocked.Increment(ref completedUploads);
+            return new HttpResponseMessage(HttpStatusCode.OK);
+        }
+    }
+
     private static byte[] MakePackage(string id, string version, string body)
     {
         using var output = new MemoryStream();

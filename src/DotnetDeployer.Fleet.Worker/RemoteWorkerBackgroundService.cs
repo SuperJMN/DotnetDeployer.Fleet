@@ -195,6 +195,9 @@ public class RemoteWorkerBackgroundService : BackgroundService
         // coordinator has already moved on and any further write would either 404 or
         // overwrite a terminal state.
         var aborted = false;
+        // Set only when the coordinator relays a user's cancellation request. Any other
+        // OperationCanceledException (for example an HttpClient timeout) is a failure.
+        var cancelRequested = false;
 
         try
         {
@@ -222,7 +225,7 @@ public class RemoteWorkerBackgroundService : BackgroundService
             // so it can never outlive its job (this used to be fire-and-forget against the
             // host token, which leaked one polling task per job and could pin the worker
             // online-but-idle for hours).
-            var monitorTask = MonitorJobActionAsync(job.Id, cancelCts, () => aborted = true, jobCt);
+            var monitorTask = MonitorJobActionAsync(job.Id, cancelCts, () => aborted = true, () => cancelRequested = true, jobCt);
 
             try
             {
@@ -897,15 +900,15 @@ public class RemoteWorkerBackgroundService : BackgroundService
         {
             throw; // Host shutting down — let it propagate
         }
-        catch (OperationCanceledException)
+        catch (OperationCanceledException ex)
         {
-            // Either user-initiated cancellation or coordinator-instructed Abort.
-            // Distinguish: on Abort we must remain silent.
+            // User-initiated cancellation, coordinator-instructed Abort, or an operation that
+            // gave up on its own (e.g. HttpClient.Timeout). On Abort we must remain silent.
             if (aborted)
             {
                 logger.LogWarning("Job {JobId} aborted by coordinator instruction; not reporting completion.", job.Id);
             }
-            else
+            else if (cancelRequested)
             {
                 try
                 {
@@ -914,6 +917,17 @@ public class RemoteWorkerBackgroundService : BackgroundService
                 }
                 catch { /* best effort */ }
                 await ReportJobFailedBestEffort(job.Id, "Cancelled by user", ct);
+            }
+            else
+            {
+                var error = $"Operation timed out or was interrupted: {ex.Message}";
+                try
+                {
+                    await Log($"=== FAILED: {error} ===");
+                    await logBuffer.FlushAsync();
+                }
+                catch { /* best effort */ }
+                await ReportJobFailedBestEffort(job.Id, error, ct);
             }
         }
         catch (Exception ex)
@@ -1117,6 +1131,7 @@ public class RemoteWorkerBackgroundService : BackgroundService
         Guid jobId,
         CancellationTokenSource cancelCts,
         Action onAbort,
+        Action onCancel,
         CancellationToken jobCt)
     {
         try
@@ -1125,6 +1140,7 @@ public class RemoteWorkerBackgroundService : BackgroundService
             if (initialAction == JobAction.Cancel)
             {
                 logger.LogInformation("Cancellation already requested for job {JobId}", jobId);
+                onCancel();
                 await cancelCts.CancelAsync();
                 return;
             }
@@ -1147,6 +1163,7 @@ public class RemoteWorkerBackgroundService : BackgroundService
                 {
                     case JobAction.Cancel:
                         logger.LogInformation("Cancellation requested for job {JobId}", jobId);
+                        onCancel();
                         await cancelCts.CancelAsync();
                         return;
                     case JobAction.Abort:

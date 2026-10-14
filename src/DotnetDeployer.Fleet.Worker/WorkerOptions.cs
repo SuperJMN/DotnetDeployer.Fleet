@@ -19,6 +19,9 @@ public class WorkerOptions
     public int HeartbeatIntervalSeconds { get; set; } = 30;
     public double JobActionPollIntervalSeconds { get; set; } = 3.0;
     public int HttpTimeoutSeconds { get; set; } = 30;
+
+    /// <summary>Timeout for package and artifact uploads and downloads to the coordinator.</summary>
+    public int TransferTimeoutMinutes { get; set; } = 30;
     public int TokenRefreshSkewSeconds { get; set; } = 60;
 
     public string CredentialsFile { get; set; } = "worker.json";
