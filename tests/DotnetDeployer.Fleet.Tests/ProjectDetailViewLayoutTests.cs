@@ -93,37 +93,60 @@ public class ProjectDetailViewLayoutTests
     }
 
     [Fact]
-    public void BuildsView_ShouldShowAllBuildsWithProjectContext()
+    public void BuildsView_ShouldShowAllBuildsAsJobRows()
     {
         var document = XDocument.Load(ProjectFilePath("Views", "BuildsView.axaml"));
         XNamespace axaml = "https://github.com/avaloniaui";
 
-        document.Descendants(axaml + "ItemsControl")
-            .Select(control => control.Attribute("ItemsSource")?.Value)
-            .Should()
-            .Contain("{Binding Builds}");
+        var lists = document.Descendants(axaml + "ItemsControl")
+            .Where(control => control.Attribute("ItemsSource")?.Value == "{Binding Builds}")
+            .ToList();
 
-        document.Descendants(axaml + "Run")
-            .Select(run => run.Attribute("Text")?.Value)
-            .Should()
-            .Contain(["{Binding ProjectName}", "{Binding ElapsedText}"]);
-
-        document.Descendants(axaml + "EnhancedButton")
-            .Select(button => button.Attribute("Content")?.Value)
-            .Should()
-            .Contain("View Status");
+        lists.Should().ContainSingle();
+        lists.Single().Elements().Should().BeEmpty("rows are rendered by JobView through the view locator");
     }
 
     [Fact]
-    public void ProjectDetailView_ShouldShowElapsedTimeForEachJob()
+    public void ProjectDetailView_ShouldShowJobsAsJobRows()
     {
         var document = XDocument.Load(ProjectFilePath("Views", "ProjectDetailView.axaml"));
         XNamespace axaml = "https://github.com/avaloniaui";
 
-        document.Descendants(axaml + "Run")
-            .Select(run => run.Attribute("Text")?.Value)
-            .Should()
-            .Contain([" · Elapsed: ", "{Binding ElapsedText}"]);
+        var lists = document.Descendants(axaml + "ItemsControl")
+            .Where(control => control.Attribute("ItemsSource")?.Value == "{Binding Jobs}")
+            .ToList();
+
+        lists.Should().ContainSingle();
+        lists.Single().Elements().Should().BeEmpty("rows are rendered by JobView through the view locator");
+    }
+
+    [Fact]
+    public void JobView_ShouldOpenTheJobFromTheWholeRowAndShowItsContext()
+    {
+        var document = XDocument.Load(ProjectFilePath("Views", "JobView.axaml"));
+        XNamespace axaml = "https://github.com/avaloniaui";
+
+        document.Root!.Attribute(XName.Get("DataType", "http://schemas.microsoft.com/winfx/2006/xaml"))!
+            .Value.Should().Be("vm:JobViewModel");
+
+        var row = document.Root.Elements(axaml + "EnhancedButton").Should().ContainSingle().Subject;
+        row.Attribute("Command")?.Value.Should().Be("{Binding OpenCommand}");
+        row.Attribute("HorizontalContentAlignment")?.Value.Should().Be("Stretch");
+
+        var bindings = row.DescendantsAndSelf()
+            .SelectMany(element => element.Attributes())
+            .Select(attribute => attribute.Value)
+            .ToList();
+
+        bindings.Should().Contain([
+            "{Binding ProjectName}",
+            "{Binding HasProjectName}",
+            "{Binding StatusText}",
+            "{Binding ElapsedText}",
+            "{Binding ShortCommitSha}"
+        ]);
+
+        row.Descendants(axaml + "EnhancedButton").Should().BeEmpty("the row itself is the only button");
     }
 
     [Fact]
@@ -234,18 +257,20 @@ public class ProjectDetailViewLayoutTests
     }
 
     [Fact]
-    public void ProjectSecretsView_ShouldBeAvailableAsFlyoutContent()
+    public void ProjectSecrets_ShouldOpenAsAPageWithItsOwnHeader()
     {
         var document = XDocument.Load(ProjectFilePath("Views", "ProjectSecretsView.axaml"));
-        XNamespace axaml = "https://github.com/avaloniaui";
 
         document.Root!.Attribute(XName.Get("DataType", "http://schemas.microsoft.com/winfx/2006/xaml"))!
             .Value.Should().Be("vm:ProjectSecretsViewModel");
 
-        document.Descendants(axaml + "TextBlock")
-            .Select(x => x.Attribute("Text")?.Value)
-            .Should()
-            .Contain("Project Secrets");
+        var viewModel = File.ReadAllText(ProjectFilePath("ViewModels", "ProjectSecretsViewModel.cs"));
+        viewModel.Should().Contain("IHaveHeader");
+        viewModel.Should().Contain("new SectionHeader(\"Project Secrets\"");
+
+        var projectDetail = File.ReadAllText(ProjectFilePath("ViewModels", "ProjectDetailViewModel.cs"));
+        projectDetail.Should().Contain("_navigator.Go(() => new ProjectSecretsViewModel(");
+        projectDetail.Should().Contain("new HeaderAction(\"Project Secrets\", \"mdi-key-outline\", OpenSecretsCommand)");
     }
 
     [Theory]
@@ -270,6 +295,16 @@ public class ProjectDetailViewLayoutTests
             .Select(stackPanel => stackPanel.Attribute("Orientation")?.Value)
             .Should()
             .NotContain("Horizontal");
+    }
+
+    [Theory]
+    [InlineData("ConnectDialogView.axaml")]
+    [InlineData("LoginDialogView.axaml")]
+    public void SignInDialogs_ShouldLetTheDialogServiceSizeThemOnPhones(string viewFile)
+    {
+        var document = XDocument.Load(ProjectFilePath("Dialogs", viewFile));
+
+        document.Root!.Attribute("Width").Should().BeNull("a fixed width overflows narrow phone screens");
     }
 
     [Fact]

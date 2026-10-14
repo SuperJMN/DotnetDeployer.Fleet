@@ -32,21 +32,12 @@ public sealed class HeaderAction
         IsDestructive = isDestructive;
     }
 
-    public HeaderAction(string text, string iconCode, object flyoutContent)
-    {
-        Text = text;
-        IconCode = iconCode;
-        FlyoutContent = flyoutContent;
-    }
-
     public string Text { get; }
     public string IconCode { get; }
-    public ICommand? Command { get; }
+    public ICommand Command { get; }
     public bool IsPrimary { get; }
     public bool IsDestructive { get; }
-    public object? FlyoutContent { get; }
-    public bool HasFlyout => FlyoutContent is not null;
-    public bool IsPrimaryCommand => IsPrimary && !IsDestructive && !HasFlyout;
-    public bool IsDestructiveCommand => IsDestructive && !HasFlyout;
-    public bool IsSecondaryCommand => !IsPrimary && !IsDestructive && !HasFlyout;
+    public bool IsPrimaryCommand => IsPrimary && !IsDestructive;
+    public bool IsDestructiveCommand => IsDestructive;
+    public bool IsSecondaryCommand => !IsPrimary && !IsDestructive;
 }

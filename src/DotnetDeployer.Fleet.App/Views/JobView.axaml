@@ -1,0 +1,82 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="clr-namespace:DotnetDeployer.Fleet.App.ViewModels"
+             xmlns:converters="clr-namespace:DotnetDeployer.Fleet.App.Converters"
+             x:Class="DotnetDeployer.Fleet.App.Views.JobView"
+             x:DataType="vm:JobViewModel">
+
+    <!-- The whole row opens the job. Its parts wrap instead of clipping on narrow screens. -->
+    <EnhancedButton Command="{Binding OpenCommand}"
+                    Background="{DynamicResource SystemControlBackgroundAltHighBrush}"
+                    BorderBrush="{DynamicResource SystemControlForegroundBaseLowBrush}"
+                    BorderThickness="1"
+                    CornerRadius="6"
+                    Padding="12,8"
+                    Margin="0,2"
+                    HorizontalAlignment="Stretch"
+                    HorizontalContentAlignment="Stretch"
+                    ToolTip.Tip="View status">
+        <FlexPanel Wrap="Wrap" ColumnGap="12" RowGap="6" AlignItems="Center">
+
+            <Panel Width="40" Height="40"
+                   ClipToBounds="True"
+                   FlexPanel.Shrink="0"
+                   IsVisible="{Binding HasProjectName}">
+                <Image Source="{Binding ProjectIconBytes, Converter={x:Static converters:ProjectIconConverters.ByteArrayToBitmap}}"
+                       Stretch="Uniform"
+                       IsVisible="{Binding HasProjectIcon}" />
+                <ContentControl Content="{Icon mdi-application-outline}"
+                                IconOptions.Size="26"
+                                Opacity="0.65"
+                                HorizontalAlignment="Center"
+                                VerticalAlignment="Center"
+                                IsVisible="{Binding HasNoProjectIcon}" />
+            </Panel>
+
+            <!-- Fixed width keeps the details column aligned across rows on wide screens. -->
+            <FlexPanel Width="210" Gap="6" AlignItems="Center" FlexPanel.Shrink="0">
+                <ContentControl Content="{Binding StatusIcon}"
+                                IconOptions.Fill="{Binding StatusBrush}"
+                                IconOptions.Size="16"
+                                FlexPanel.Shrink="0" />
+                <TextBlock Text="{Binding StatusText}"
+                           Foreground="{Binding StatusBrush}"
+                           FontWeight="SemiBold"
+                           TextWrapping="Wrap" />
+            </FlexPanel>
+
+            <StackPanel Spacing="2" FlexPanel.Grow="1" FlexPanel.Basis="220">
+                <TextBlock FontSize="13"
+                           FontWeight="SemiBold"
+                           Text="{Binding DisplayName}"
+                           ToolTip.Tip="{Binding Version}"
+                           TextTrimming="CharacterEllipsis" />
+                <FlexPanel Wrap="Wrap" ColumnGap="12" RowGap="2">
+                    <FlexPanel.Styles>
+                        <Style Selector="TextBlock">
+                            <Setter Property="FontSize" Value="12" />
+                            <Setter Property="Opacity" Value="0.6" />
+                        </Style>
+                    </FlexPanel.Styles>
+                    <TextBlock Text="{Binding ProjectName}" IsVisible="{Binding HasProjectName}" />
+                    <TextBlock Text="{Binding KindText}" />
+                    <TextBlock>
+                        <Run Text="{Binding TimestampLabel}" />
+                        <Run Text="{Binding TimestampText}" />
+                    </TextBlock>
+                    <TextBlock>
+                        <Run Text="Elapsed" />
+                        <Run Text="{Binding ElapsedText}" />
+                    </TextBlock>
+                    <TextBlock IsVisible="{Binding ShortCommitSha, Converter={x:Static ObjectConverters.IsNotNull}}"
+                               ToolTip.Tip="{Binding Job.TriggerCommitSha}">
+                        <Run Text="Commit" />
+                        <Run Text="{Binding ShortCommitSha}" />
+                    </TextBlock>
+                </FlexPanel>
+            </StackPanel>
+
+        </FlexPanel>
+    </EnhancedButton>
+
+</UserControl>
