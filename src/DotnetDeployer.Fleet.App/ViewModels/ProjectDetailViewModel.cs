@@ -545,6 +545,13 @@ public partial class JobViewModel : ReactiveObject
     public string ElapsedText => JobDurationFormatter.Format(Job.GetElapsedDurationMs(DateTimeOffset.UtcNow));
 
     /// <summary>
+    /// Finished jobs show when they ended; the rest show when they were queued.
+    /// </summary>
+    public string TimestampLabel => Job.FinishedAt is null ? "Queued" : "Finished";
+
+    public string TimestampText => LocalTimestampFormatter.Format(Job.FinishedAt ?? Job.EnqueuedAt);
+
+    /// <summary>
     /// Pushes a fresher snapshot of the underlying <see cref="DeploymentJob"/> into this VM,
     /// raising change notifications for the user-visible fields. Used when the deployment is
     /// renamed (a version was detected) or any other field is updated by the coordinator.
@@ -564,6 +571,8 @@ public partial class JobViewModel : ReactiveObject
         this.RaisePropertyChanged(nameof(StatusIcon));
         this.RaisePropertyChanged(nameof(StatusBrush));
         this.RaisePropertyChanged(nameof(KindText));
+        this.RaisePropertyChanged(nameof(TimestampLabel));
+        this.RaisePropertyChanged(nameof(TimestampText));
         RefreshElapsed();
     }
 

@@ -78,8 +78,10 @@
                                         <Run Text="{Binding ProjectName}" />
                                         <Run Text=" | " />
                                         <Run Text="{Binding KindText}" />
-                                        <Run Text=" | Queued: " />
-                                        <Run Text="{Binding Job.EnqueuedAt}" />
+                                        <Run Text=" | " />
+                                        <Run Text="{Binding TimestampLabel}" />
+                                        <Run Text=": " />
+                                        <Run Text="{Binding TimestampText}" />
                                         <Run Text=" | Elapsed: " />
                                         <Run Text="{Binding ElapsedText}" />
                                     </TextBlock>
