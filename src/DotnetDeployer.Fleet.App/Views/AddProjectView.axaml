@@ -1,6 +1,7 @@
 <UserControl xmlns="https://github.com/avaloniaui"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              xmlns:vm="clr-namespace:DotnetDeployer.Fleet.App.ViewModels"
+             xmlns:views="clr-namespace:DotnetDeployer.Fleet.App.Views"
              x:Class="DotnetDeployer.Fleet.App.Views.AddProjectView"
              x:DataType="vm:AddProjectViewModel">
 
@@ -28,10 +29,9 @@
                 <TextBox Text="{Binding Branch}" PlaceholderText="main" IsEnabled="{Binding !IsBusy}" />
             </StackPanel>
 
-            <StackPanel Spacing="4">
-                <TextBlock Text="Polling interval (minutes, 0 = manual only)" Opacity="0.7" FontSize="12" TextWrapping="Wrap" />
-                <TextBox Text="{Binding PollingInterval}" PlaceholderText="0" IsEnabled="{Binding !IsBusy}" />
-            </StackPanel>
+            <Panel IsEnabled="{Binding !IsBusy}">
+                <views:PollingIntervalView DataContext="{Binding Polling}" />
+            </Panel>
 
             <CheckBox Content="Run solution tests before deployment"
                       IsChecked="{Binding RunTestsBeforeDeploy}"

@@ -49,4 +49,20 @@ public sealed class EditProjectViewModelTests
 
         vm.ExpectedPackageIdsText.Should().Be("Pkg.A, Pkg.B");
     }
+
+    [Fact]
+    public void Loads_persisted_polling_interval()
+    {
+        var project = new Project { PollingIntervalMinutes = 30 };
+        var client = new FleetApiClient(new HttpClientHandler(), new HttpClientHandler());
+
+        var vm = new EditProjectViewModel(
+            project,
+            client,
+            Substitute.For<INavigator>(),
+            projectsForRefresh: null);
+
+        vm.Polling.IsAutomatic.Should().BeTrue();
+        vm.Polling.Minutes.Should().Be(30);
+    }
 }

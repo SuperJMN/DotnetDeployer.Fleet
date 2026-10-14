@@ -1,4 +1,5 @@
 using System.Reactive;
+using System.Reactive.Linq;
 using DotnetDeployer.Fleet.Api.Client;
 using DotnetDeployer.Fleet.Core.Domain;
 using ReactiveUI;
@@ -18,7 +19,6 @@ public partial class EditProjectViewModel : ReactiveObject
     [Reactive] private string _name;
     [Reactive] private string _gitUrl;
     [Reactive] private string _branch;
-    [Reactive] private string _pollingInterval;
     [Reactive] private string _gitToken;
     [Reactive] private bool _runTestsBeforeDeploy;
     [Reactive] private string _expectedPackageIdsText;
@@ -35,7 +35,7 @@ public partial class EditProjectViewModel : ReactiveObject
         _name = project.Name;
         _gitUrl = project.GitUrl;
         _branch = project.Branch;
-        _pollingInterval = project.PollingIntervalMinutes.ToString();
+        Polling = new PollingIntervalViewModel(project.PollingIntervalMinutes);
         _originalToken = project.GitToken ?? string.Empty;
         _gitToken = _originalToken;
         _runTestsBeforeDeploy = project.RunTestsBeforeDeploy;
@@ -43,7 +43,8 @@ public partial class EditProjectViewModel : ReactiveObject
 
         var canSave = this.WhenAnyValue(
             x => x.Name, x => x.GitUrl, x => x.Branch,
-            (n, g, b) => !string.IsNullOrWhiteSpace(n) && !string.IsNullOrWhiteSpace(g) && !string.IsNullOrWhiteSpace(b));
+            (n, g, b) => !string.IsNullOrWhiteSpace(n) && !string.IsNullOrWhiteSpace(g) && !string.IsNullOrWhiteSpace(b))
+            .CombineLatest(Polling.IsValid, (hasRequiredFields, isPollingValid) => hasRequiredFields && isPollingValid);
 
         SaveCommand = ReactiveCommand.CreateFromTask(SaveAsync, canSave);
         CancelCommand = ReactiveCommand.Create(Cancel);
@@ -51,6 +52,8 @@ public partial class EditProjectViewModel : ReactiveObject
 
         SaveCommand.ThrownExceptions.Subscribe(ex => Error = ex.Message);
     }
+
+    public PollingIntervalViewModel Polling { get; }
 
     public ReactiveCommand<Unit, Unit> SaveCommand { get; }
     public ReactiveCommand<Unit, Unit> CancelCommand { get; }
@@ -62,7 +65,12 @@ public partial class EditProjectViewModel : ReactiveObject
         IsBusy = true;
         try
         {
-            int polling = int.TryParse(PollingInterval, out var p) ? p : 0;
+            var polling = Polling.ToMinutes();
+            if (polling.IsFailure)
+            {
+                Error = polling.Error;
+                return;
+            }
 
             // Token semantics on the Update endpoint:
             //   null  => leave unchanged
@@ -81,7 +89,7 @@ public partial class EditProjectViewModel : ReactiveObject
                 name: Name,
                 gitUrl: GitUrl,
                 branch: Branch,
-                pollingIntervalMinutes: polling,
+                pollingIntervalMinutes: polling.Value,
                 gitToken: tokenToSend,
                 runTestsBeforeDeploy: RunTestsBeforeDeploy,
                 expectedPackageIds: packageIds);

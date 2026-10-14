@@ -1,0 +1,29 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="clr-namespace:DotnetDeployer.Fleet.App.ViewModels"
+             x:Class="DotnetDeployer.Fleet.App.Views.PollingIntervalView"
+             x:DataType="vm:PollingIntervalViewModel">
+
+    <StackPanel Spacing="4">
+        <CheckBox Content="Poll the repository automatically"
+                  IsChecked="{Binding IsAutomatic}" />
+
+        <StackPanel Spacing="4" IsVisible="{Binding IsAutomatic}">
+            <TextBlock Text="Polling interval (minutes)" Opacity="0.7" FontSize="12" TextWrapping="Wrap" />
+            <NumericUpDown Value="{Binding Minutes}"
+                           Minimum="1" Increment="1"
+                           ParsingNumberStyle="Integer"
+                           HorizontalAlignment="Stretch" />
+        </StackPanel>
+
+        <TextBlock Text="Manual only: deployments start only when you queue them."
+                   IsVisible="{Binding !IsAutomatic}"
+                   Opacity="0.5" FontSize="11" TextWrapping="Wrap" />
+
+        <TextBlock Text="{Binding Error}"
+                   Foreground="Red"
+                   IsVisible="{Binding Error, Converter={x:Static ObjectConverters.IsNotNull}}"
+                   TextWrapping="Wrap" />
+    </StackPanel>
+
+</UserControl>
