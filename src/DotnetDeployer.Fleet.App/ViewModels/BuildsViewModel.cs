@@ -7,6 +7,7 @@ using DotnetDeployer.Fleet.Api.Client;
 using DotnetDeployer.Fleet.Core.Domain;
 using ReactiveUI;
 using ReactiveUI.SourceGenerators;
+using Zafiro.Avalonia.Dialogs;
 using Zafiro.UI;
 using Zafiro.UI.Navigation;
 using Zafiro.UI.Shell.Utils;
@@ -19,6 +20,7 @@ public partial class BuildsViewModel : ReactiveObject, IHaveHeader, IDisposable
     private readonly IConnectedFleetClientContext clientContext;
     private readonly INavigator navigator;
     private readonly IFileSystemPicker fileSystemPicker;
+    private readonly IDialog dialog;
     private readonly INotificationService notificationService;
     private readonly CompositeDisposable disposables = [];
 
@@ -31,11 +33,13 @@ public partial class BuildsViewModel : ReactiveObject, IHaveHeader, IDisposable
         IConnectedFleetClientContext clientContext,
         INavigator navigator,
         IFileSystemPicker fileSystemPicker,
+        IDialog dialog,
         INotificationService notificationService)
     {
         this.clientContext = clientContext;
         this.navigator = navigator;
         this.fileSystemPicker = fileSystemPicker;
+        this.dialog = dialog;
         this.notificationService = notificationService;
 
         RefreshCommand = ReactiveCommand.CreateFromTask(LoadBuilds);
@@ -81,20 +85,24 @@ public partial class BuildsViewModel : ReactiveObject, IHaveHeader, IDisposable
 
     private async Task<Maybe<Result>> ClearFinishedJobs()
     {
-        IsLoading = true;
         Error = null;
-        try
+        return await clientContext.Require().Bind(async client =>
         {
-            return await clientContext.Require().Bind(async client =>
+            var current = await client.GetAllJobsAsync();
+            if (!await dialog.ConfirmClearBuilds(current, "from all projects"))
+                return;
+
+            IsLoading = true;
+            try
             {
                 await client.DeleteFinishedJobsAsync();
                 await LoadBuilds(client);
-            });
-        }
-        finally
-        {
-            IsLoading = false;
-        }
+            }
+            finally
+            {
+                IsLoading = false;
+            }
+        });
     }
 
     private async Task LoadBuilds(FleetApiClient client)

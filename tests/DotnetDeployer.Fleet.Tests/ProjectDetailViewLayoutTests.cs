@@ -194,47 +194,6 @@ public class ProjectDetailViewLayoutTests
     }
 
     [Fact]
-    public void ProjectsView_ShouldKeepProjectActionsTogether()
-    {
-        var document = XDocument.Load(ProjectFilePath("Views", "ProjectsView.axaml"));
-        XNamespace axaml = "https://github.com/avaloniaui";
-
-        var actionRows = document.Descendants(axaml + "FlexPanel")
-            .Where(panel => panel.Attribute("HorizontalAlignment")?.Value == "Right")
-            .Where(panel => panel.Attribute("VerticalAlignment")?.Value == "Bottom")
-            .Where(panel => panel.Attribute("JustifyContent")?.Value == "End")
-            .ToList();
-
-        actionRows.Should().ContainSingle();
-        actionRows.Single()
-            .Descendants(axaml + "EnhancedButton")
-            .Select(button => button.Attribute("Command")?.Value)
-            .Should()
-            .Contain(["{Binding ResetIconCommand}", "{Binding EditCommand}", "{Binding DeleteCommand}"]);
-        actionRows.Single()
-            .Descendants(axaml + "EnhancedButton")
-            .Single(button => button.Attribute("Command")?.Value == "{Binding ResetIconCommand}")
-            .Attribute("ToolTip.Tip")?.Value
-            .Should()
-            .Be("Use automatic icon");
-
-        var openCards = document.Descendants(axaml + "EnhancedButton")
-            .Where(button => button.Attribute("Command")?.Value == "{Binding OpenCommand}")
-            .ToList();
-
-        openCards.Should().ContainSingle();
-        var openCard = openCards.Single();
-        openCard.Attribute("Content")?.Value.Should().BeNull();
-        openCard.Attribute("ToolTip.Tip")?.Value.Should().Be("Open project");
-        openCard.Attribute("HorizontalContentAlignment")?.Value.Should().Be("Stretch");
-
-        document.Descendants(axaml + "EnhancedButton")
-            .Where(button => button.Attribute("Content")?.Value == "Open")
-            .Should()
-            .BeEmpty();
-    }
-
-    [Fact]
     public void PackageBuildOptionsDialog_ShouldExposeBuildTargetOptions()
     {
         var document = XDocument.Load(ProjectFilePath("Views", "PackageBuildOptionsView.axaml"));

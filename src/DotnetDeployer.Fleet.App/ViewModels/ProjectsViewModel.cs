@@ -270,6 +270,13 @@ public partial class ProjectViewModel : ReactiveObject
 
     private async Task DeleteAsync()
     {
+        var confirmed = await _dialog.ConfirmDestructive(
+            "Delete project?",
+            $"Delete the project \"{Project.Name}\"? This cannot be undone.",
+            "Delete");
+        if (!confirmed)
+            return;
+
         await _client.DeleteProjectAsync(Project.Id);
         _parent.RefreshCommand.Execute(Unit.Default).Subscribe();
     }
