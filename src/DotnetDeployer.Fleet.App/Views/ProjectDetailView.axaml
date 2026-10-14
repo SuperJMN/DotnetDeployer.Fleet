@@ -83,8 +83,10 @@
                                         <TextBlock FontSize="12"
                                                    Opacity="0.6">
                                             <Run Text="{Binding KindText}" />
-                                            <Run Text=" · Queued: " />
-                                            <Run Text="{Binding Job.EnqueuedAt}" />
+                                            <Run Text=" · " />
+                                            <Run Text="{Binding TimestampLabel}" />
+                                            <Run Text=": " />
+                                            <Run Text="{Binding TimestampText}" />
                                             <Run Text=" · Elapsed: " />
                                             <Run Text="{Binding ElapsedText}" />
                                         </TextBlock>
