@@ -14,11 +14,13 @@ namespace DotnetDeployer.Fleet.WorkerService.Coordinator;
 public class RemoteWorkerJobSource : IWorkerJobSource
 {
     private readonly HttpClient http;
+    private readonly HttpClient transfers;
     private readonly ILogger<RemoteWorkerJobSource> logger;
 
-    public RemoteWorkerJobSource(HttpClient http, ILogger<RemoteWorkerJobSource> logger)
+    public RemoteWorkerJobSource(HttpClient http, ILogger<RemoteWorkerJobSource> logger, WorkerTransferClient? transfers = null)
     {
         this.http = http;
+        this.transfers = transfers?.Http ?? http;
         this.logger = logger;
     }
 
@@ -55,7 +57,7 @@ public class RemoteWorkerJobSource : IWorkerJobSource
         request.Content = new StreamContent(content);
         request.Content.Headers.ContentType = new MediaTypeHeaderValue("application/octet-stream");
 
-        var resp = await http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, ct);
+        var resp = await transfers.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, ct);
         resp.EnsureSuccessStatusCode();
     }
 
@@ -69,14 +71,14 @@ public class RemoteWorkerJobSource : IWorkerJobSource
 
     public async Task UploadNuGetReleasePackageAsync(Guid jobId, string commitSha, string packageId, Stream content, CancellationToken ct = default)
     {
-        using var response = await http.PostAsync($"/api/queue/jobs/{jobId}/nuget-release/{commitSha}/packages/{Uri.EscapeDataString(packageId)}",
+        using var response = await transfers.PostAsync($"/api/queue/jobs/{jobId}/nuget-release/{commitSha}/packages/{Uri.EscapeDataString(packageId)}",
             new StreamContent(content), ct);
         response.EnsureSuccessStatusCode();
     }
 
     public async Task<Stream> DownloadNuGetReleasePackageAsync(Guid jobId, string commitSha, string packageId, CancellationToken ct = default)
     {
-        using var response = await http.GetAsync($"/api/queue/jobs/{jobId}/nuget-release/{commitSha}/packages/{Uri.EscapeDataString(packageId)}",
+        using var response = await transfers.GetAsync($"/api/queue/jobs/{jobId}/nuget-release/{commitSha}/packages/{Uri.EscapeDataString(packageId)}",
             HttpCompletionOption.ResponseHeadersRead, ct);
         response.EnsureSuccessStatusCode();
         var tempPath = Path.Combine(Path.GetTempPath(), "fleet-staged-" + Guid.NewGuid().ToString("N") + ".nupkg");
