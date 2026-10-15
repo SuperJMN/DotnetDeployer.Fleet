@@ -104,14 +104,27 @@
                                        HorizontalAlignment="Right"
                                        VerticalAlignment="Bottom"
                                        Margin="12">
-                                <EnhancedButton ToolTip.Tip="Use automatic icon" Command="{Binding ResetIconCommand}">
-                                    <icons:Icon Value="mdi-refresh" />
-                                </EnhancedButton>
                                 <EnhancedButton ToolTip.Tip="Edit" Command="{Binding EditCommand}">
                                     <icons:Icon Value="mdi-pencil" />
                                 </EnhancedButton>
-                                <EnhancedButton ToolTip.Tip="Delete" Classes="Destructive" Command="{Binding DeleteCommand}">
-                                    <icons:Icon Value="mdi-delete-outline" />
+                                <!-- Rare and destructive actions stay out of the way, behind a menu. -->
+                                <EnhancedButton ToolTip.Tip="More actions">
+                                    <EnhancedButton.Flyout>
+                                        <MenuFlyout Placement="BottomEdgeAlignedRight">
+                                            <MenuItem Header="Use automatic icon" Command="{Binding ResetIconCommand}">
+                                                <MenuItem.Icon>
+                                                    <icons:Icon Value="mdi-refresh" />
+                                                </MenuItem.Icon>
+                                            </MenuItem>
+                                            <Separator />
+                                            <MenuItem Header="Delete project…" Command="{Binding DeleteCommand}">
+                                                <MenuItem.Icon>
+                                                    <icons:Icon Value="mdi-delete-outline" />
+                                                </MenuItem.Icon>
+                                            </MenuItem>
+                                        </MenuFlyout>
+                                    </EnhancedButton.Flyout>
+                                    <icons:Icon Value="mdi-dots-vertical" />
                                 </EnhancedButton>
                             </FlexPanel>
                         </Grid>

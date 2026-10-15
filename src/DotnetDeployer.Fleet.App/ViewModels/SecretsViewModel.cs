@@ -7,6 +7,7 @@ using DotnetDeployer.Fleet.Api.Client;
 using DotnetDeployer.Fleet.Core.Domain;
 using ReactiveUI;
 using ReactiveUI.SourceGenerators;
+using Zafiro.Avalonia.Dialogs;
 using Zafiro.DivineBytes;
 using Zafiro.UI;
 using Zafiro.UI.Navigation;
@@ -20,6 +21,7 @@ public partial class SecretsViewModel : ReactiveObject, IHaveHeader, IDisposable
     private readonly FleetApiClient _client;
     private readonly IConnectedFleetClientContext clientContext;
     private readonly IFileSystemPicker _picker;
+    private readonly IDialog _dialog;
     private readonly CompositeDisposable _disposables = [];
 
     [Reactive] private bool _isLoading;
@@ -33,11 +35,13 @@ public partial class SecretsViewModel : ReactiveObject, IHaveHeader, IDisposable
         FleetApiClient client,
         IConnectedFleetClientContext clientContext,
         IFileSystemPicker picker,
+        IDialog dialog,
         INotificationService notificationService)
     {
         _client = client;
         this.clientContext = clientContext;
         _picker = picker;
+        _dialog = dialog;
 
         var canAdd = this.WhenAnyValue(x => x.NewName, x => x.NewValue,
             (n, v) => !string.IsNullOrWhiteSpace(n) && !string.IsNullOrWhiteSpace(v));
@@ -74,7 +78,7 @@ public partial class SecretsViewModel : ReactiveObject, IHaveHeader, IDisposable
                     secrets,
                     secret => secret.Id,
                     viewModel => viewModel.Secret.Id,
-                    secret => new SecretViewModel(secret, client, this),
+                    secret => new SecretViewModel(secret, client, _dialog, this),
                     (viewModel, secret) => viewModel.ApplySecretUpdate(secret));
             });
         }
@@ -87,7 +91,7 @@ public partial class SecretsViewModel : ReactiveObject, IHaveHeader, IDisposable
     private async Task AddAsync()
     {
         var secret = await _client.CreateSecretAsync(NewName.Trim(), NewValue);
-        Secrets.Add(new SecretViewModel(secret, _client, this));
+        Secrets.Add(new SecretViewModel(secret, _client, _dialog, this));
         NewName = "";
         NewValue = "";
     }
@@ -141,7 +145,7 @@ public partial class SecretsViewModel : ReactiveObject, IHaveHeader, IDisposable
             }
 
             var created = await _client.CreateSecretAsync(name, value);
-            var vm = new SecretViewModel(created, _client, this);
+            var vm = new SecretViewModel(created, _client, _dialog, this);
             Secrets.Add(vm);
             existingByName[name] = vm;
         }
@@ -192,6 +196,7 @@ public partial class SecretsViewModel : ReactiveObject, IHaveHeader, IDisposable
 public partial class SecretViewModel : ReactiveObject
 {
     private readonly FleetApiClient _client;
+    private readonly IDialog _dialog;
     private readonly SecretsViewModel _parent;
 
     public Secret Secret { get; private set; }
@@ -200,10 +205,11 @@ public partial class SecretViewModel : ReactiveObject
     [Reactive] private string _value;
     [Reactive] private bool _isEditing;
 
-    public SecretViewModel(Secret secret, FleetApiClient client, SecretsViewModel parent)
+    public SecretViewModel(Secret secret, FleetApiClient client, IDialog dialog, SecretsViewModel parent)
     {
         Secret = secret;
         _client = client;
+        _dialog = dialog;
         _parent = parent;
         _name = secret.Name;
         _value = secret.Value;
@@ -238,6 +244,13 @@ public partial class SecretViewModel : ReactiveObject
 
     private async Task DeleteAsync()
     {
+        var confirmed = await _dialog.ConfirmDestructive(
+            "Delete secret?",
+            $"Delete the global secret \"{Secret.Name}\"? This cannot be undone.",
+            "Delete");
+        if (!confirmed)
+            return;
+
         await _client.DeleteSecretAsync(Secret.Id);
         _parent.Remove(this);
     }

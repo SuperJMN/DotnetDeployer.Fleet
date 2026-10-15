@@ -66,7 +66,7 @@ public partial class ProjectDetailViewModel : ReactiveObject, IHaveHeader, IDisp
         });
         OpenSecretsCommand = ReactiveCommand.Create(() =>
         {
-            _navigator.Go(() => new ProjectSecretsViewModel(Project.Id, Project.Name, _client, clientContext, notificationService));
+            _navigator.Go(() => new ProjectSecretsViewModel(Project.Id, Project.Name, _client, clientContext, _dialog, notificationService));
         });
 
         _disposables.Add(RefreshCommand.Results().HandleErrorsWith(notificationService, Maybe.From("Cannot load project")));
@@ -200,6 +200,10 @@ public partial class ProjectDetailViewModel : ReactiveObject, IHaveHeader, IDisp
     {
         return await clientContext.Require().Bind(async client =>
         {
+            var current = await client.GetProjectJobsAsync(Project.Id);
+            if (!await _dialog.ConfirmClearBuilds(current, $"from {Project.Name}"))
+                return;
+
             await client.DeleteFinishedProjectJobsAsync(Project.Id);
             var jobs = await client.GetProjectJobsAsync(Project.Id);
             ObservableCollectionSync.Sync(
