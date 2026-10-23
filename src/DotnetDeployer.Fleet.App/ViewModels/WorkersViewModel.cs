@@ -7,6 +7,7 @@ using CSharpFunctionalExtensions;
 using DotnetDeployer.Fleet.Api.Client;
 using ReactiveUI;
 using ReactiveUI.SourceGenerators;
+using Zafiro.Avalonia.Dialogs;
 using Zafiro.UI;
 using Zafiro.UI.Navigation;
 using Zafiro.UI.Shell.Utils;
@@ -17,23 +18,28 @@ namespace DotnetDeployer.Fleet.App.ViewModels;
 public partial class WorkersViewModel : ReactiveObject, IHaveHeader, IDisposable
 {
     private readonly IConnectedFleetClientContext clientContext;
+    private readonly IDialog _dialog;
     private readonly CompositeDisposable _disposables = [];
 
     [Reactive] private bool _isLoading;
 
     public ObservableCollection<WorkerItemViewModel> Workers { get; } = [];
 
-    public WorkersViewModel(IConnectedFleetClientContext clientContext, INotificationService notificationService)
+    public WorkersViewModel(IConnectedFleetClientContext clientContext, IDialog dialog, INotificationService notificationService)
     {
         this.clientContext = clientContext;
+        _dialog = dialog;
         RefreshCommand = ReactiveCommand.CreateFromTask(LoadAsync);
+        RemoveWorkerCommand = ReactiveCommand.CreateFromTask<WorkerItemViewModel, Maybe<Result>>(RemoveAsync);
         _disposables.Add(RefreshCommand.Results().HandleErrorsWith(notificationService, Maybe.From("Cannot load workers")));
+        _disposables.Add(RemoveWorkerCommand.Results().HandleErrorsWith(notificationService, Maybe.From("Cannot remove worker")));
 
         Header = Observable.Return<object>(new SectionHeader("Workers",
             new HeaderAction("Refresh", "mdi-refresh", RefreshCommand)));
     }
 
     public ReactiveCommand<Unit, Maybe<Result>> RefreshCommand { get; }
+    public ReactiveCommand<WorkerItemViewModel, Maybe<Result>> RemoveWorkerCommand { get; }
     public IObservable<object> Header { get; }
     public void Dispose() => _disposables.Dispose();
 
@@ -50,7 +56,7 @@ public partial class WorkersViewModel : ReactiveObject, IHaveHeader, IDisposable
                     workers,
                     worker => worker.Id,
                     viewModel => viewModel.Worker.Id,
-                    worker => new WorkerItemViewModel(worker, client),
+                    worker => new WorkerItemViewModel(worker, client, this),
                     (viewModel, worker) => viewModel.ApplyWorkerUpdate(worker));
             });
         }
@@ -58,6 +64,27 @@ public partial class WorkersViewModel : ReactiveObject, IHaveHeader, IDisposable
         {
             IsLoading = false;
         }
+    }
+
+    private async Task<Maybe<Result>> RemoveAsync(WorkerItemViewModel item)
+    {
+        if (!await _dialog.ConfirmDestructive("Remove worker?", RemovalMessage(item.Worker), "Remove"))
+            return Maybe<Result>.None;
+
+        return await clientContext.Require().Bind(async client =>
+        {
+            // The coordinator fails whatever the worker was running or had been assigned.
+            await client.DeleteWorkerAsync(item.Worker.Id);
+            Workers.Remove(item);
+        });
+    }
+
+    private static string RemovalMessage(FleetApiClient.WorkerInfo worker)
+    {
+        var message = $"Remove the worker \"{worker.Name}\" from the fleet? Builds it is running or has been assigned will be marked as failed.";
+        return worker.Status == Core.Domain.WorkerStatus.Offline
+            ? message
+            : message + " It is still connected: it will stop receiving builds and has to be registered again to rejoin.";
     }
 }
 
@@ -70,16 +97,18 @@ public partial class WorkerItemViewModel : ReactiveObject
     [Reactive] private double _maxDiskUsageGb;
     [Reactive] private bool _isSaving;
 
-    public WorkerItemViewModel(FleetApiClient.WorkerInfo worker, FleetApiClient client)
+    public WorkerItemViewModel(FleetApiClient.WorkerInfo worker, FleetApiClient client, WorkersViewModel parent)
     {
         Worker = worker;
         _client = client;
         _maxDiskUsageGb = worker.MaxDiskUsageGb;
 
         SaveConfigCommand = ReactiveCommand.CreateFromTask(SaveConfigAsync);
+        RemoveCommand = ReactiveCommand.CreateFromObservable(() => parent.RemoveWorkerCommand.Execute(this).Select(_ => Unit.Default));
     }
 
     public ReactiveCommand<System.Reactive.Unit, System.Reactive.Unit> SaveConfigCommand { get; }
+    public ReactiveCommand<Unit, Unit> RemoveCommand { get; }
 
     public void ApplyWorkerUpdate(FleetApiClient.WorkerInfo updated)
     {
