@@ -14,7 +14,7 @@ public sealed class WorkerUploadLimitsTests
 {
     [Theory]
     [InlineData("/api/queue/jobs/{id:guid}/artifacts", 512L * 1024 * 1024)]
-    [InlineData("/api/queue/jobs/{id:guid}/nuget-release/{commitSha}/packages/{packageId}", 64L * 1024 * 1024)]
+    [InlineData("/api/queue/jobs/{id:guid}/nuget-release/{commitSha}/packages/{packageId}", 250L * 1024 * 1024)]
     public async Task WorkerUploadEndpoints_UseAppropriateBodyLimits(string route, long expectedLimit)
     {
         var builder = WebApplication.CreateBuilder();

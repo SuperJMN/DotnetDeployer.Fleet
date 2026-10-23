@@ -112,6 +112,44 @@ public sealed class NuGetReleaseProtocolTests : IDisposable
         handler.CompletedUploads.Should().Be(2);
     }
 
+    [Fact]
+    public async Task Remote_worker_names_the_package_when_the_coordinator_rejects_it_as_too_large()
+    {
+        using var http = new HttpClient(new StatusHandler(HttpStatusCode.RequestEntityTooLarge)) { BaseAddress = new Uri("https://coordinator.invalid") };
+        var source = new RemoteWorkerJobSource(http, NullLogger<RemoteWorkerJobSource>.Instance);
+
+        await using var package = new MemoryStream(new byte[3 * 1024 * 1024]);
+        var upload = () => source.UploadNuGetReleasePackageAsync(Guid.NewGuid(), new string('a', 40), "DemoLib", package);
+
+        (await upload.Should().ThrowAsync<HttpRequestException>())
+            .WithMessage("*DemoLib (3 MB)*too large*");
+    }
+
+    [Fact]
+    public async Task Remote_worker_names_the_package_and_limit_when_the_connection_breaks_during_upload()
+    {
+        using var http = new HttpClient(new BrokenPipeHandler()) { BaseAddress = new Uri("https://coordinator.invalid") };
+        var source = new RemoteWorkerJobSource(http, NullLogger<RemoteWorkerJobSource>.Instance);
+
+        await using var package = new MemoryStream(new byte[3 * 1024 * 1024]);
+        var upload = () => source.UploadNuGetReleasePackageAsync(Guid.NewGuid(), new string('a', 40), "DemoLib", package);
+
+        (await upload.Should().ThrowAsync<HttpRequestException>())
+            .WithMessage("*DemoLib (3 MB)*Broken pipe*250 MB*");
+    }
+
+    private sealed class StatusHandler(HttpStatusCode status) : HttpMessageHandler
+    {
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct) =>
+            Task.FromResult(new HttpResponseMessage(status));
+    }
+
+    private sealed class BrokenPipeHandler : HttpMessageHandler
+    {
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct) =>
+            throw new HttpRequestException("Error while copying content to a stream. Broken pipe.");
+    }
+
     private sealed class SlowUploadHandler(TimeSpan delay) : HttpMessageHandler
     {
         private int completedUploads;

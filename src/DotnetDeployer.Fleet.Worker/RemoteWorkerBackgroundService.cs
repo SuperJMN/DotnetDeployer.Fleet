@@ -716,6 +716,13 @@ public class RemoteWorkerBackgroundService : BackgroundService
                         var release = await jobSource.GetNuGetReleaseAsync(job.Id, sha, token);
                         if (release is null)
                         {
+                            var oversized = packagePaths
+                                .Select(path => NuGetPackageSizeLimit.Check(Path.GetFileName(path), new FileInfo(path).Length))
+                                .OfType<string>()
+                                .ToList();
+                            if (oversized.Count > 0)
+                                return (false, string.Join(Environment.NewLine, oversized));
+
                             var identities = new List<(string Path, PackageIdentity Identity)>();
                             foreach (var path in packagePaths)
                                 identities.Add((path, await NuGetFeedVerifier.ReadIdentityAsync(path, token)));
