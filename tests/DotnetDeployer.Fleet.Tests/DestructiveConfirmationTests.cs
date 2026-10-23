@@ -136,6 +136,44 @@ public sealed class DestructiveConfirmationTests
         api.Deletes.Should().Equal($"/api/projects/{project.Id}/jobs/finished");
     }
 
+    [Fact]
+    public async Task Cancelling_the_removal_of_a_worker_keeps_it()
+    {
+        var api = new RecordingApi();
+        var dialog = new ScriptedDialog(confirm: false);
+        using var workers = WorkersWith(api, dialog, "rpi4", WorkerStatus.Offline, out var worker);
+
+        await worker.RemoveCommand.Execute();
+
+        dialog.Shown.Should().ContainSingle().Which.Message.Should().Contain("\"rpi4\"");
+        api.Deletes.Should().BeEmpty();
+        workers.Workers.Should().ContainSingle();
+    }
+
+    [Fact]
+    public async Task Confirming_the_removal_of_a_worker_unregisters_it()
+    {
+        var api = new RecordingApi();
+        using var workers = WorkersWith(api, new ScriptedDialog(confirm: true), "rpi4", WorkerStatus.Offline, out var worker);
+
+        await worker.RemoveCommand.Execute();
+
+        api.Deletes.Should().Equal($"/api/workers/{worker.Worker.Id}");
+        workers.Workers.Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task Removing_a_connected_worker_warns_that_it_has_to_be_registered_again()
+    {
+        var dialog = new ScriptedDialog(confirm: false);
+        using var workers = WorkersWith(new RecordingApi(), dialog, "Peach", WorkerStatus.Busy, out var worker);
+
+        await worker.RemoveCommand.Execute();
+
+        dialog.Shown.Should().ContainSingle().Which.Message.Should()
+            .Contain("still connected").And.Contain("registered again");
+    }
+
     private static Project AProject() =>
         new() { Id = Guid.NewGuid(), Name = "App", GitUrl = "https://example.test/repo.git", Branch = "master" };
 
@@ -163,6 +201,18 @@ public sealed class DestructiveConfirmationTests
         secret = new ProjectSecretViewModel(new Secret { Id = Guid.NewGuid(), Name = name, Value = "x" }, projectId, api.Client, dialog, secrets);
         secrets.Secrets.Add(secret);
         return secrets;
+    }
+
+    private static WorkersViewModel WorkersWith(RecordingApi api, ScriptedDialog dialog, string name, WorkerStatus status, out WorkerItemViewModel worker)
+    {
+        var context = Substitute.For<IConnectedFleetClientContext>();
+        context.Require().Returns(Task.FromResult(Maybe.From(Result.Success(api.Client))));
+        var workers = new WorkersViewModel(context, dialog, Substitute.For<INotificationService>());
+        var info = new FleetApiClient.WorkerInfo(Guid.NewGuid(), name, status, IsEmbedded: false, LastSeenAt: null,
+            MaxDiskUsageGb: 10, RepoStoragePath: null);
+        worker = new WorkerItemViewModel(info, api.Client, workers);
+        workers.Workers.Add(worker);
+        return workers;
     }
 
     private static DeploymentJob Job(Guid projectId, JobStatus status) => new()

@@ -41,21 +41,21 @@ public class WorkerItemViewModelTests
     [Fact]
     public void CapabilityLabel_renders_cores_memory_and_arch()
     {
-        var vm = new WorkerItemViewModel(Info(8, 16 * 1024, "X64"), client: null!);
+        var vm = new WorkerItemViewModel(Info(8, 16 * 1024, "X64"), client: null!, parent: null!);
         vm.CapabilityLabel.Should().Be("8 core(s) · 16.0 GB · X64");
     }
 
     [Fact]
     public void CapabilityLabel_is_empty_when_no_capabilities_reported()
     {
-        var vm = new WorkerItemViewModel(Info(0, 0, null), client: null!);
+        var vm = new WorkerItemViewModel(Info(0, 0, null), client: null!, parent: null!);
         vm.CapabilityLabel.Should().BeEmpty();
     }
 
     [Fact]
     public void CapabilityLabel_skips_missing_fields()
     {
-        var vm = new WorkerItemViewModel(Info(4, 0, null), client: null!);
+        var vm = new WorkerItemViewModel(Info(4, 0, null), client: null!, parent: null!);
         vm.CapabilityLabel.Should().Be("4 core(s)");
     }
 
@@ -64,7 +64,7 @@ public class WorkerItemViewModelTests
     {
         var workerId = Guid.NewGuid();
         var version = "0.1.9+58f1c495e00554b14859456e8557aa98b9b177dd";
-        var vm = new WorkerItemViewModel(InfoWithVersion(workerId, version), client: null!);
+        var vm = new WorkerItemViewModel(InfoWithVersion(workerId, version), client: null!, parent: null!);
 
         vm.DisplayVersion.Should().Be("v0.1.9");
         vm.Worker.Version.Should().Be(version);
@@ -74,7 +74,7 @@ public class WorkerItemViewModelTests
     public void DisplayVersion_updates_when_worker_version_changes()
     {
         var workerId = Guid.NewGuid();
-        var vm = new WorkerItemViewModel(InfoWithVersion(workerId, "0.1.9+old"), client: null!);
+        var vm = new WorkerItemViewModel(InfoWithVersion(workerId, "0.1.9+old"), client: null!, parent: null!);
         var updatedVersion = "0.1.10-1+Branch.master.Sha.93bf16a3c8799dffeec6a642f430b3961c1f037e";
 
         var seen = new List<string?>();

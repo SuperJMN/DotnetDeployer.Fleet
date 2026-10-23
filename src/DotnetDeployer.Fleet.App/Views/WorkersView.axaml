@@ -1,6 +1,7 @@
 <UserControl xmlns="https://github.com/avaloniaui"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              xmlns:vm="clr-namespace:DotnetDeployer.Fleet.App.ViewModels"
+             xmlns:icons="clr-namespace:Optris.Icons.Avalonia;assembly=Optris.Icons.Avalonia"
              x:Class="DotnetDeployer.Fleet.App.Views.WorkersView"
              x:DataType="vm:WorkersViewModel">
 
@@ -32,46 +33,62 @@
                             BorderBrush="{DynamicResource SystemControlForegroundBaseLowBrush}"
                             BorderThickness="1"
                             CornerRadius="6">
-                        <FlexPanel Wrap="Wrap" Gap="12" AlignItems="Center">
-                            <StackPanel Spacing="4" MinWidth="200" FlexPanel.Grow="1">
-                                <FlexPanel Wrap="Wrap" Gap="8" AlignItems="Center">
-                                    <TextBlock Text="{Binding Worker.Name}"
-                                               FontWeight="SemiBold" FontSize="14" />
-                                    <TextBlock Text="{Binding EmbeddedLabel}"
-                                               Opacity="0.5" FontSize="12"
-                                               VerticalAlignment="Center" />
-                                    <TextBlock Text="{Binding DisplayVersion}"
-                                               IsVisible="{Binding Worker.Version, Converter={x:Static ObjectConverters.IsNotNull}}"
-                                               ToolTip.Tip="{Binding Worker.Version}"
-                                               Opacity="0.6" FontSize="11"
-                                               VerticalAlignment="Center"
-                                               TextTrimming="CharacterEllipsis"
-                                               MaxWidth="220" />
-                                </FlexPanel>
-                                <TextBlock Text="{Binding StatusLabel}" FontSize="12" />
-                                <TextBlock FontSize="11" Opacity="0.6">
-                                    <Run Text="Last seen: " />
-                                    <Run Text="{Binding LastSeenText}" />
-                                </TextBlock>
-                            </StackPanel>
+                        <Grid ColumnDefinitions="*,Auto" ColumnSpacing="8">
+                            <FlexPanel Wrap="Wrap" Gap="12" AlignItems="Center">
+                                <StackPanel Spacing="4" MinWidth="200" FlexPanel.Grow="1">
+                                    <FlexPanel Wrap="Wrap" Gap="8" AlignItems="Center">
+                                        <TextBlock Text="{Binding Worker.Name}"
+                                                   FontWeight="SemiBold" FontSize="14" />
+                                        <TextBlock Text="{Binding EmbeddedLabel}"
+                                                   Opacity="0.5" FontSize="12"
+                                                   VerticalAlignment="Center" />
+                                        <TextBlock Text="{Binding DisplayVersion}"
+                                                   IsVisible="{Binding Worker.Version, Converter={x:Static ObjectConverters.IsNotNull}}"
+                                                   ToolTip.Tip="{Binding Worker.Version}"
+                                                   Opacity="0.6" FontSize="11"
+                                                   VerticalAlignment="Center"
+                                                   TextTrimming="CharacterEllipsis"
+                                                   MaxWidth="220" />
+                                    </FlexPanel>
+                                    <TextBlock Text="{Binding StatusLabel}" FontSize="12" />
+                                    <TextBlock FontSize="11" Opacity="0.6">
+                                        <Run Text="Last seen: " />
+                                        <Run Text="{Binding LastSeenText}" />
+                                    </TextBlock>
+                                </StackPanel>
 
-                            <!-- Disk config -->
-                            <StackPanel Spacing="4" MinWidth="200">
-                                <TextBlock Text="Max disk (GB)" FontSize="11" Opacity="0.7" />
-                                <Grid ColumnDefinitions="*,Auto" ColumnSpacing="8">
-                                    <NumericUpDown Grid.Column="0"
-                                                   Value="{Binding MaxDiskUsageGb}"
-                                                   Minimum="1" Maximum="500" Increment="1"
-                                                   FormatString="N0" />
-                                    <EnhancedButton Grid.Column="1"
-                                                    Content="Save"
-                                                    Icon="{Icon mdi-content-save}"
-                                                    Classes="Primary"
-                                                    Command="{Binding SaveConfigCommand}"
-                                                    IsEnabled="{Binding !IsSaving}" />
-                                </Grid>
-                            </StackPanel>
-                        </FlexPanel>
+                                <!-- Disk config -->
+                                <StackPanel Spacing="4" MinWidth="200">
+                                    <TextBlock Text="Max disk (GB)" FontSize="11" Opacity="0.7" />
+                                    <Grid ColumnDefinitions="*,Auto" ColumnSpacing="8">
+                                        <NumericUpDown Grid.Column="0"
+                                                       Value="{Binding MaxDiskUsageGb}"
+                                                       Minimum="1" Maximum="500" Increment="1"
+                                                       FormatString="N0" />
+                                        <EnhancedButton Grid.Column="1"
+                                                        Content="Save"
+                                                        Icon="{Icon mdi-content-save}"
+                                                        Classes="Primary"
+                                                        Command="{Binding SaveConfigCommand}"
+                                                        IsEnabled="{Binding !IsSaving}" />
+                                    </Grid>
+                                </StackPanel>
+                            </FlexPanel>
+
+                            <!-- Removing a worker is rare and destructive: keep it behind a menu. -->
+                            <EnhancedButton Grid.Column="1" VerticalAlignment="Top" ToolTip.Tip="More actions">
+                                <EnhancedButton.Flyout>
+                                    <MenuFlyout Placement="BottomEdgeAlignedRight">
+                                        <MenuItem Header="Remove worker…" Command="{Binding RemoveCommand}">
+                                            <MenuItem.Icon>
+                                                <icons:Icon Value="mdi-delete-outline" />
+                                            </MenuItem.Icon>
+                                        </MenuItem>
+                                    </MenuFlyout>
+                                </EnhancedButton.Flyout>
+                                <icons:Icon Value="mdi-dots-vertical" />
+                            </EnhancedButton>
+                        </Grid>
                     </Border>
                     </DataTemplate>
                 </ItemsControl.ItemTemplate>
