@@ -71,9 +71,31 @@ public class RemoteWorkerJobSource : IWorkerJobSource
 
     public async Task UploadNuGetReleasePackageAsync(Guid jobId, string commitSha, string packageId, Stream content, CancellationToken ct = default)
     {
-        using var response = await transfers.PostAsync($"/api/queue/jobs/{jobId}/nuget-release/{commitSha}/packages/{Uri.EscapeDataString(packageId)}",
-            new StreamContent(content), ct);
-        response.EnsureSuccessStatusCode();
+        var size = content.CanSeek ? NuGetPackageSizeLimit.Describe(content.Length - content.Position) : "unknown size";
+        HttpResponseMessage response;
+        try
+        {
+            response = await transfers.PostAsync($"/api/queue/jobs/{jobId}/nuget-release/{commitSha}/packages/{Uri.EscapeDataString(packageId)}",
+                new StreamContent(content), ct);
+        }
+        catch (HttpRequestException ex)
+        {
+            // When the coordinator rejects an oversized body it closes the connection mid-upload,
+            // so the worker only sees a broken pipe. Name the package and its size instead.
+            throw new HttpRequestException(
+                $"Uploading NuGet package {packageId} ({size}) to the coordinator failed: {ex.Message} " +
+                $"The coordinator closes the connection for packages over {NuGetPackageSizeLimit.Describe(NuGetPackageSizeLimit.MaxBytes)}.",
+                ex);
+        }
+
+        using (response)
+        {
+            if (response.StatusCode == System.Net.HttpStatusCode.RequestEntityTooLarge)
+                throw new HttpRequestException(
+                    $"The coordinator rejected NuGet package {packageId} ({size}) as too large.",
+                    null, response.StatusCode);
+            response.EnsureSuccessStatusCode();
+        }
     }
 
     public async Task<Stream> DownloadNuGetReleasePackageAsync(Guid jobId, string commitSha, string packageId, CancellationToken ct = default)
