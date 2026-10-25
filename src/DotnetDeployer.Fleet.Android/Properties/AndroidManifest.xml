@@ -4,11 +4,14 @@
     android:allowBackup="true"
     android:label="DotnetDeployer Fleet"
     android:icon="@mipmap/icon"
+    android:banner="@drawable/tv_banner"
     android:supportsRtl="true"
     android:theme="@style/MyTheme.NoActionBar"
     android:enableOnBackInvokedCallback="true"
     android:usesCleartextTraffic="true" />
   <uses-sdk android:minSdkVersion="23" android:targetSdkVersion="36" />
+  <uses-feature android:name="android.hardware.touchscreen" android:required="false" />
+  <uses-feature android:name="android.software.leanback" android:required="false" />
   <uses-permission android:name="android.permission.INTERNET" />
   <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
 </manifest>
