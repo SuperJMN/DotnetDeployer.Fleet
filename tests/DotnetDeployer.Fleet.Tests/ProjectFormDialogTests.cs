@@ -42,7 +42,7 @@ public sealed class ProjectFormDialogTests
         var api = new RecordingApi();
         var dialog = new UserDialog(UserDialog.Dismiss);
         var project = new ProjectViewModel(AProject(), api.Client, Substitute.For<INavigator>(), null!,
-            Substitute.For<IFileSystemPicker>(), dialog);
+            Substitute.For<IFileSystemPicker>(), dialog, Substitute.For<INotificationService>());
 
         await project.EditCommand.Execute();
 
@@ -141,7 +141,8 @@ public sealed class ProjectFormDialogTests
         var context = Substitute.For<IConnectedFleetClientContext>();
         context.Require().Returns(Task.FromResult(Maybe.From(Result.Success(api.Client))));
         return new ProjectDetailViewModel(project, api.Client, context, Substitute.For<INavigator>(),
-            Substitute.For<IFileSystemPicker>(), dialog, Substitute.For<INotificationService>());
+            Substitute.For<IFileSystemPicker>(), dialog, Substitute.For<INotificationService>(),
+            new InMemoryPackageTargetSelectionStore());
     }
 
     /// <summary>
