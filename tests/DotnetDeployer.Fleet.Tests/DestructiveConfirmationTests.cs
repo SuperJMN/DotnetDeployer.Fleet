@@ -112,7 +112,7 @@ public sealed class DestructiveConfirmationTests
         await vm.ClearFinishedJobsCommand.Execute();
 
         dialog.Shown.Should().ContainSingle().Which.Message.Should()
-            .Contain("2 finished builds").And.Contain("still running are not touched");
+            .Contain("2 finished jobs").And.Contain("still running are not touched");
         api.Deletes.Should().BeEmpty();
     }
 

@@ -37,6 +37,18 @@ public sealed class JobDetailViewModelHeaderTests
     }
 
     [Fact]
+    public async Task Header_names_a_job_without_version_after_its_commit()
+    {
+        var job = FinishedJob(JobStatus.Failed);
+        job.TriggerCommitSha = "58f1c495e00554b14859456e8557aa98b9b177dd";
+        using var vm = CreateViewModel(job);
+
+        var header = (SectionHeader)await vm.Header.FirstAsync();
+
+        header.Title.Should().Be("Deployment of commit 58f1c49");
+    }
+
+    [Fact]
     public async Task Header_shows_the_queued_time_like_the_job_lists()
     {
         var enqueuedAt = new DateTimeOffset(2026, 10, 14, 10, 54, 0, TimeSpan.Zero);
@@ -199,7 +211,7 @@ public sealed class JobDetailViewModelHeaderTests
         vm.StatusText.Should().Be("Failed");
         vm.StatusIcon.Source.Should().Be("mdi-alert-circle");
         vm.StatusTone.Should().Be(Tone.Danger);
-        header.Subtitle.Should().StartWith("Status: Failed |");
+        header.Subtitle.Should().StartWith("Status: Failed · ");
     }
 
     private static DeploymentJob FinishedJob(JobStatus status) => new()

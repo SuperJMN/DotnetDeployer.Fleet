@@ -107,7 +107,7 @@ public sealed class BuildsViewModelTests
         await vm.ClearFinishedJobsCommand.Execute().FirstAsync();
 
         dialog.Shown.Should().ContainSingle().Which.Message.Should()
-            .Contain("1 finished build from all projects").And.Contain("still running are not touched");
+            .Contain("1 finished job from all projects").And.Contain("still running are not touched");
         requests.Should().NotContain(HttpMethod.Delete);
     }
 
@@ -201,13 +201,13 @@ public sealed class BuildsViewModelTests
     }
 
     [Fact]
-    public async Task Header_ShouldExposeClearBuildsAction()
+    public async Task Header_ShouldExposeClearJobsAction()
     {
         using var vm = CreateViewModel(Substitute.For<IConnectedFleetClientContext>());
 
         var header = (SectionHeader)await vm.Header.FirstAsync();
 
-        var action = header.Actions.Should().ContainSingle(action => action.Text == "Clear Builds").Subject;
+        var action = header.Actions.Should().ContainSingle(action => action.Text == "Clear Jobs").Subject;
         action.IconCode.Should().Be("mdi-delete-sweep-outline");
         action.Command.Should().BeSameAs(vm.ClearFinishedJobsCommand);
     }

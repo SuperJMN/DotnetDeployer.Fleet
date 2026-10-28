@@ -16,7 +16,7 @@ using Zafiro.UI.Shell.Utils;
 
 namespace DotnetDeployer.Fleet.App.ViewModels;
 
-[Section(name: "Builds", icon: "mdi-history", sortIndex: 1)]
+[Section(name: "Jobs", icon: "mdi-history", sortIndex: 1)]
 public partial class BuildsViewModel : ReactiveObject, IHaveHeader, IDisposable
 {
     private readonly IConnectedFleetClientContext clientContext;
@@ -52,16 +52,16 @@ public partial class BuildsViewModel : ReactiveObject, IHaveHeader, IDisposable
 
         RefreshCommand = ReactiveCommand.CreateFromTask(LoadBuilds);
         ClearFinishedJobsCommand = ReactiveCommand.CreateFromTask(ClearFinishedJobs);
-        disposables.Add(RefreshCommand.Results().HandleErrorsWith(notificationService, Maybe.From("Cannot load builds")));
-        disposables.Add(ClearFinishedJobsCommand.Results().HandleErrorsWith(notificationService, Maybe.From("Cannot clear builds")));
+        disposables.Add(RefreshCommand.Results().HandleErrorsWith(notificationService, Maybe.From("Cannot load jobs")));
+        disposables.Add(ClearFinishedJobsCommand.Results().HandleErrorsWith(notificationService, Maybe.From("Cannot clear jobs")));
         disposables.Add(Observable.Timer(TimeSpan.Zero, TimeSpan.FromSeconds(1), RxSchedulers.MainThreadScheduler)
             .Subscribe(_ => RefreshBuildElapsed()));
         AutoRefresh = new AutoRefresh(RefreshInBackground, autoRefreshScheduler);
         disposables.Add(AutoRefresh);
 
-        Header = Observable.Return<object>(new SectionHeader("Builds",
-            "All projects, newest first",
-            new HeaderAction("Clear Builds", "mdi-delete-sweep-outline", ClearFinishedJobsCommand),
+        Header = Observable.Return<object>(new SectionHeader("Jobs",
+            "Builds and deploys of all projects, newest first",
+            new HeaderAction("Clear Jobs", "mdi-delete-sweep-outline", ClearFinishedJobsCommand),
             new HeaderAction("Refresh", "mdi-refresh", RefreshCommand)));
     }
 

@@ -80,7 +80,7 @@ public partial class JobDetailViewModel : ReactiveObject, IHaveHeader, IDisposab
     public bool IsNuGetVerificationPending => Job.Status == JobStatus.Succeeded && Job.NuGetVerification == NuGetVerificationStatus.Pending;
     public bool IsNuGetVerified => Job.Status == JobStatus.Succeeded && Job.NuGetVerification == NuGetVerificationStatus.Verified;
     public string ElapsedText => JobDurationFormatter.Format(Job.GetElapsedDurationMs(DateTimeOffset.UtcNow));
-    public string? ShortCommitSha => Job.TriggerCommitSha is { Length: > 0 } sha ? sha[..Math.Min(7, sha.Length)] : null;
+    public string? ShortCommitSha => JobNaming.ShortSha(Job.TriggerCommitSha);
 
     public ReadOnlyObservableCollection<LogLine> FilteredLogs { get; }
 
@@ -710,14 +710,7 @@ public partial class JobDetailViewModel : ReactiveObject, IHaveHeader, IDisposab
         return actions.ToArray();
     }
 
-    private string HeaderTitle => $"{HeaderKind} {HeaderJobName}";
-
-    private string HeaderKind => Job.Kind == JobKind.PackageBuild ? "Package build" : "Deployment";
-
-    private string HeaderJobName =>
-        string.IsNullOrWhiteSpace(Job.Version)
-            ? ShortId(Job.Id)
-            : VersionDisplay.Visible(Job.Version) ?? Job.Version;
+    private string HeaderTitle => JobNaming.Title(Job);
 
     private string HeaderSubtitle
     {
@@ -742,7 +735,7 @@ public partial class JobDetailViewModel : ReactiveObject, IHaveHeader, IDisposab
             if (Job.EnqueuedAt != default)
                 parts.Add($"Queued: {LocalTimestampFormatter.Format(Job.EnqueuedAt)}");
 
-            return string.Join(" | ", parts);
+            return string.Join(" · ", parts);
         }
     }
 

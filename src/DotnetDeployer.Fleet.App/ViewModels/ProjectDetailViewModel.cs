@@ -88,7 +88,7 @@ public partial class ProjectDetailViewModel : ReactiveObject, IHaveHeader, IDisp
             // Deploying publishes and cannot be undone, so it gets the irreversible style instead of
             // looking like Queue Build, which only produces packages.
             new HeaderAction("Queue Deploy", "mdi-rocket-launch", DeployCommand, isDestructive: true),
-            new HeaderAction("Clear Builds", "mdi-delete-sweep-outline", ClearFinishedJobsCommand),
+            new HeaderAction("Clear Jobs", "mdi-delete-sweep-outline", ClearFinishedJobsCommand),
             new HeaderAction("Refresh", "mdi-refresh", RefreshCommand),
             new HeaderAction("Project Secrets", "mdi-key-outline", OpenSecretsCommand),
             new HeaderAction("Edit", "mdi-pencil", EditCommand));
@@ -559,7 +559,6 @@ public partial class JobViewModel : ReactiveObject
     public bool HasProjectName => !string.IsNullOrWhiteSpace(ProjectName);
 
     private string? _version;
-    private string _displayName = string.Empty;
     private byte[]? projectIconBytes;
     private bool hasProjectIcon;
     private bool hasNoProjectIcon = true;
@@ -583,7 +582,6 @@ public partial class JobViewModel : ReactiveObject
         this.notificationService = notificationService;
         this.projectName = projectName;
         _version = job.Version;
-        _displayName = ComputeDisplayName(job.Version);
 
         OpenCommand = ReactiveCommand.Create(Open);
     }
@@ -596,19 +594,14 @@ public partial class JobViewModel : ReactiveObject
         {
             if (_version == value) return;
             this.RaiseAndSetIfChanged(ref _version, value);
-            DisplayName = ComputeDisplayName(value);
         }
     }
 
     /// <summary>
-    /// Friendly label shown in deployment lists. Falls back to a short prefix of the
-    /// job GUID until a version is detected from the worker's log stream.
+    /// Friendly label shown in job lists: the detected version, or the commit or queue time
+    /// until a version is detected from the worker's log stream.
     /// </summary>
-    public string DisplayName
-    {
-        get => _displayName;
-        private set => this.RaiseAndSetIfChanged(ref _displayName, value);
-    }
+    public string DisplayName => JobNaming.Name(Job);
 
     public byte[]? ProjectIconBytes
     {
@@ -643,7 +636,7 @@ public partial class JobViewModel : ReactiveObject
 
     public string TimestampText => LocalTimestampFormatter.Format(Job.FinishedAt ?? Job.EnqueuedAt);
 
-    public string? ShortCommitSha => Job.TriggerCommitSha is { Length: > 0 } sha ? sha[..Math.Min(7, sha.Length)] : null;
+    public string? ShortCommitSha => JobNaming.ShortSha(Job.TriggerCommitSha);
 
     /// <summary>
     /// Pushes a fresher snapshot of the underlying <see cref="DeploymentJob"/> into this VM,
@@ -660,6 +653,7 @@ public partial class JobViewModel : ReactiveObject
 
         Version = updated.Version;
         this.RaisePropertyChanged(nameof(Job));
+        this.RaisePropertyChanged(nameof(DisplayName));
         this.RaisePropertyChanged(nameof(HasProjectName));
         this.RaisePropertyChanged(nameof(StatusText));
         this.RaisePropertyChanged(nameof(StatusIcon));
@@ -672,9 +666,6 @@ public partial class JobViewModel : ReactiveObject
     }
 
     public void RefreshElapsed() => this.RaisePropertyChanged(nameof(ElapsedText));
-
-    private string ComputeDisplayName(string? version) =>
-        string.IsNullOrWhiteSpace(version) ? Job.Id.ToString("N")[..8] : VersionDisplay.Visible(version)!;
 
     public string StatusText => Job.Status switch
     {
