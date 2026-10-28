@@ -1,5 +1,4 @@
 using System.Collections.ObjectModel;
-using System.Globalization;
 using DotnetDeployer.Fleet.Core.Domain;
 using ReactiveUI;
 using Zafiro.UI;
@@ -69,10 +68,10 @@ public sealed class JobPhaseRow : ReactiveObject
                 _ => "•"
             };
 
+        // Same format as the job's elapsed time so phases and totals read alike.
         DurationText = phase.DurationMs switch
         {
-            { } ms when ms < 1000 => $"{ms} ms",
-            { } ms => $"{(ms / 1000.0).ToString("0.0", CultureInfo.InvariantCulture)}s",
+            { } ms => JobDurationFormatter.Format(ms),
             null when phase.EndedAt is null => "running…",
             _ => ""
         };

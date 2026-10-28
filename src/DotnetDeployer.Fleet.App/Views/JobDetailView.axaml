@@ -22,13 +22,19 @@
                 CornerRadius="4"
                 Padding="12"
                 Margin="0,0,0,8">
-            <StackPanel Orientation="Horizontal" Spacing="10">
+            <Grid ColumnDefinitions="Auto,*,Auto" ColumnSpacing="10">
                 <TextBlock Text="❌" FontSize="18" VerticalAlignment="Top" />
-                <StackPanel Spacing="2">
+                <StackPanel Grid.Column="1" Spacing="2">
                     <TextBlock Text="Job error" FontWeight="SemiBold" Foreground="#FF6B6B" />
                     <TextBlock Text="{Binding ErrorMessage}" TextWrapping="Wrap" />
                 </StackPanel>
-            </StackPanel>
+                <EnhancedButton Grid.Column="2"
+                                Content="Show error in log"
+                                Icon="{Icon mdi-text-box-search-outline}"
+                                Command="{Binding ShowErrorInLogCommand}"
+                                VerticalAlignment="Center"
+                                ToolTip.Tip="Open the log at the first error line" />
+            </Grid>
         </Border>
 
         <!-- NuGet verification: published packages are checked after the job succeeds. -->
@@ -68,22 +74,6 @@
             </StackPanel>
         </Border>
 
-        <Border DockPanel.Dock="Top"
-                Background="{DynamicResource SystemControlBackgroundAltHighBrush}"
-                CornerRadius="4"
-                Padding="10,6"
-                Margin="0,0,0,8">
-            <FlexPanel Wrap="Wrap" Gap="8" AlignItems="Center">
-                <ContentControl Content="{Icon mdi-timer-outline}"
-                                IconOptions.Size="14"
-                                VerticalAlignment="Center" />
-                <TextBlock Text="Elapsed:" FontWeight="SemiBold"
-                           VerticalAlignment="Center" Opacity="0.8" />
-                <TextBlock Text="{Binding ElapsedText}"
-                           FontWeight="SemiBold" VerticalAlignment="Center" />
-            </FlexPanel>
-        </Border>
-
         <!-- Current phase badge: shown while a phase is in flight -->
         <Border DockPanel.Dock="Top"
                 IsVisible="{Binding HasCurrentPhase}"
@@ -102,12 +92,6 @@
                            TextTrimming="CharacterEllipsis" />
             </FlexPanel>
         </Border>
-
-        <TextBlock DockPanel.Dock="Top"
-                   Text="Phase status"
-                   FontSize="14"
-                   FontWeight="SemiBold"
-                   Margin="0,0,0,8" />
 
         <Expander DockPanel.Dock="Top"
                   Header="Package artifacts"
@@ -142,34 +126,40 @@
         </Expander>
 
         <Grid>
-            <ScrollViewer IsVisible="{Binding !IsDetailedLogVisible}"
-                          HorizontalScrollBarVisibility="Auto"
-                          VerticalScrollBarVisibility="Auto">
-                <Grid>
-                    <TreeView ItemsSource="{Binding Phases}"
-                              IsVisible="{Binding HasPhases}">
-                        <TreeView.Styles>
-                            <Style Selector="TreeViewItem">
-                                <Setter Property="IsExpanded" Value="True" />
-                            </Style>
-                        </TreeView.Styles>
-                        <TreeView.ItemTemplate>
-                            <TreeDataTemplate x:DataType="vm:JobPhaseRowContainer" ItemsSource="{Binding Content.Children}">
-                                <Grid ColumnDefinitions="Auto,*,Auto" Margin="0,2">
-                                    <TextBlock Grid.Column="0" Text="{Binding Content.Icon}" Margin="0,0,8,0" />
-                                    <TextBlock Grid.Column="1" Text="{Binding Content.DisplayName}"
-                                               TextTrimming="CharacterEllipsis" />
-                                    <TextBlock Grid.Column="2" Text="{Binding Content.DurationText}"
-                                               Opacity="0.6" FontSize="11" Margin="8,0,0,0" />
-                                </Grid>
-                            </TreeDataTemplate>
-                        </TreeView.ItemTemplate>
-                    </TreeView>
-                    <TextBlock Text="No phase events yet."
-                               Opacity="0.6"
-                               IsVisible="{Binding !HasPhases}" />
-                </Grid>
-            </ScrollViewer>
+            <DockPanel IsVisible="{Binding !IsDetailedLogVisible}">
+                <TextBlock DockPanel.Dock="Top"
+                           Text="Phase status"
+                           FontSize="14"
+                           FontWeight="SemiBold"
+                           Margin="0,0,0,8" />
+                <ScrollViewer HorizontalScrollBarVisibility="Auto"
+                              VerticalScrollBarVisibility="Auto">
+                    <Grid>
+                        <TreeView ItemsSource="{Binding Phases}"
+                                  IsVisible="{Binding HasPhases}">
+                            <TreeView.Styles>
+                                <Style Selector="TreeViewItem">
+                                    <Setter Property="IsExpanded" Value="True" />
+                                </Style>
+                            </TreeView.Styles>
+                            <TreeView.ItemTemplate>
+                                <TreeDataTemplate x:DataType="vm:JobPhaseRowContainer" ItemsSource="{Binding Content.Children}">
+                                    <Grid ColumnDefinitions="Auto,*,Auto" Margin="0,2">
+                                        <TextBlock Grid.Column="0" Text="{Binding Content.Icon}" Margin="0,0,8,0" />
+                                        <TextBlock Grid.Column="1" Text="{Binding Content.DisplayName}"
+                                                   TextTrimming="CharacterEllipsis" />
+                                        <TextBlock Grid.Column="2" Text="{Binding Content.DurationText}"
+                                                   Opacity="0.6" FontSize="11" Margin="8,0,0,0" />
+                                    </Grid>
+                                </TreeDataTemplate>
+                            </TreeView.ItemTemplate>
+                        </TreeView>
+                        <TextBlock Text="No phase events yet."
+                                   Opacity="0.6"
+                                   IsVisible="{Binding !HasPhases}" />
+                    </Grid>
+                </ScrollViewer>
+            </DockPanel>
 
             <DockPanel IsVisible="{Binding IsDetailedLogVisible}">
                 <!-- Toolbar: search + severity filter (wraps on narrow widths) -->

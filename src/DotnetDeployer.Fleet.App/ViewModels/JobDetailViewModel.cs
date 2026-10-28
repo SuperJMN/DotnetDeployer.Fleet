@@ -42,6 +42,9 @@ public partial class JobDetailViewModel : ReactiveObject, IHaveHeader, IDisposab
     private TerminalControlModel? _terminalModel;
     private SectionHeader currentHeader;
     private bool isDisposed;
+    private bool revealFirstErrorPending;
+    private bool terminalRedrawn;
+    private Guid? resolvedWorkerId;
 
     public DeploymentJob Job { get; private set; }
 
@@ -55,6 +58,7 @@ public partial class JobDetailViewModel : ReactiveObject, IHaveHeader, IDisposab
     [Reactive] private string? _currentPhase;
     [Reactive] private DateTimeOffset? _currentPhaseStartedAt;
     [Reactive] private bool _isDetailedLogVisible;
+    [Reactive] private string? _workerName;
 
     public ReadOnlyObservableCollection<JobPhaseRowContainer> Phases => _phaseTree.Phases;
     public ObservableCollection<PackageArtifactViewModel> Artifacts { get; } = new();
@@ -71,6 +75,7 @@ public partial class JobDetailViewModel : ReactiveObject, IHaveHeader, IDisposab
     public bool IsNuGetVerificationPending => Job.Status == JobStatus.Succeeded && Job.NuGetVerification == NuGetVerificationStatus.Pending;
     public bool IsNuGetVerified => Job.Status == JobStatus.Succeeded && Job.NuGetVerification == NuGetVerificationStatus.Verified;
     public string ElapsedText => JobDurationFormatter.Format(Job.GetElapsedDurationMs(DateTimeOffset.UtcNow));
+    public string? ShortCommitSha => Job.TriggerCommitSha is { Length: > 0 } sha ? sha[..Math.Min(7, sha.Length)] : null;
 
     public ReadOnlyObservableCollection<LogLine> FilteredLogs { get; }
 
@@ -119,6 +124,7 @@ public partial class JobDetailViewModel : ReactiveObject, IHaveHeader, IDisposab
         RefreshArtifactsCommand = ReactiveCommand.CreateFromTask(() => RefreshArtifactsAsync(default));
         NextSearchResultCommand = ReactiveCommand.Create(NavigateNextSearchResult);
         ToggleDetailedLogCommand = ReactiveCommand.Create(ToggleDetailedLog);
+        ShowErrorInLogCommand = ReactiveCommand.Create(ShowErrorInLog);
         CancelJobCommand = ReactiveCommand.CreateFromTask(CancelJobAsync,
             this.WhenAnyValue(x => x.CanCancel));
         RefreshArtifactsCommand.ThrownExceptions.Subscribe(ex => ErrorMessage = ex.Message).DisposeWith(disposables);
@@ -139,6 +145,7 @@ public partial class JobDetailViewModel : ReactiveObject, IHaveHeader, IDisposab
             .ObserveOn(RxSchedulers.MainThreadScheduler)
             .Subscribe(updated => ApplyJobSnapshot(updated!))
             .DisposeWith(disposables);
+        ResolveWorkerName();
 
         var minSeverityChanges = this.WhenAnyValue(x => x.MinSeverity);
 
@@ -148,7 +155,7 @@ public partial class JobDetailViewModel : ReactiveObject, IHaveHeader, IDisposab
             .Bind(out var filtered)
             // One terminal update per change set, so a filter change that removes
             // or inserts many lines redraws the terminal only once.
-            .Subscribe(_ => _terminalFeed?.Sync());
+            .Subscribe(_ => SyncTerminal());
 
         FilteredLogs = filtered;
 
@@ -241,6 +248,7 @@ public partial class JobDetailViewModel : ReactiveObject, IHaveHeader, IDisposab
     public ReactiveCommand<Unit, Unit> RefreshArtifactsCommand { get; }
     public ReactiveCommand<Unit, Unit> NextSearchResultCommand { get; }
     public ReactiveCommand<Unit, Unit> ToggleDetailedLogCommand { get; }
+    public ReactiveCommand<Unit, Unit> ShowErrorInLogCommand { get; }
     public ReactiveCommand<Unit, Unit> CancelJobCommand { get; }
 
     /// <summary>
@@ -251,7 +259,20 @@ public partial class JobDetailViewModel : ReactiveObject, IHaveHeader, IDisposab
     public void SetTerminalModel(TerminalControlModel model)
     {
         TerminalModel = model;
-        ShowLogsIn(text => TerminalModel?.Feed(text), ReplaceTerminalModelWithEmptyOne);
+        ShowLogsIn(text => TerminalModel?.Feed(text), ClearTerminal);
+    }
+
+    /// <summary>
+    /// Writes the visible log lines again into an empty terminal with the current size.
+    /// The terminal does not reflow text written at another width, so the view calls this
+    /// whenever the number of columns changes (for example when the hidden log is first shown).
+    /// </summary>
+    public void RedrawTerminal()
+    {
+        if (TerminalModel is null) return;
+
+        ReplaceTerminalModelWithEmptyOne();
+        ShowLogsIn(text => TerminalModel?.Feed(text), ClearTerminal);
     }
 
     /// <summary>
@@ -262,13 +283,36 @@ public partial class JobDetailViewModel : ReactiveObject, IHaveHeader, IDisposab
     internal void ShowLogsIn(Action<string> writeToTerminal, Action clearTerminal)
     {
         _terminalFeed = new LogTerminalFeed(FilteredLogs, writeToTerminal, clearTerminal);
-        _terminalFeed.Sync();
+        terminalRedrawn = true;
+        SyncTerminal();
     }
 
     public void DetachTerminalModel()
     {
         _terminalFeed = null;
         TerminalModel = null;
+    }
+
+    /// <summary>
+    /// Brings the terminal up to date. A pending "show error" request is applied again
+    /// after a redraw, because a redrawn terminal starts at the end of the log.
+    /// </summary>
+    private void SyncTerminal()
+    {
+        if (_terminalFeed is null) return;
+
+        _terminalFeed.Sync();
+        if (!terminalRedrawn) return;
+
+        terminalRedrawn = false;
+        if (revealFirstErrorPending)
+            RevealFirstError();
+    }
+
+    private void ClearTerminal()
+    {
+        ReplaceTerminalModelWithEmptyOne();
+        terminalRedrawn = true;
     }
 
     private void ReplaceTerminalModelWithEmptyOne()
@@ -289,6 +333,9 @@ public partial class JobDetailViewModel : ReactiveObject, IHaveHeader, IDisposab
 
     private void OnSearchTextChanged(string? text)
     {
+        if (!string.IsNullOrEmpty(text))
+            revealFirstErrorPending = false;
+
         if (TerminalModel is null) return;
 
         if (string.IsNullOrEmpty(text))
@@ -310,9 +357,58 @@ public partial class JobDetailViewModel : ReactiveObject, IHaveHeader, IDisposab
 
     private void ToggleDetailedLog()
     {
-        IsDetailedLogVisible = !IsDetailedLogVisible;
+        SetDetailedLogVisible(!IsDetailedLogVisible);
+        if (!IsDetailedLogVisible)
+            revealFirstErrorPending = false;
+    }
+
+    private void ShowErrorInLog()
+    {
+        revealFirstErrorPending = true;
+        SetDetailedLogVisible(true);
+        RevealFirstError();
+    }
+
+    private void SetDetailedLogVisible(bool isVisible)
+    {
+        if (IsDetailedLogVisible == isVisible)
+            return;
+
+        IsDetailedLogVisible = isVisible;
         this.RaisePropertyChanged(nameof(DetailedLogButtonText));
         PublishHeader();
+    }
+
+    /// <summary>
+    /// Scrolls the terminal to the first error line, or to the end of the log when no line
+    /// looks like an error (the cause of a failure is usually printed last).
+    /// </summary>
+    private void RevealFirstError()
+    {
+        if (TerminalModel is not { } terminal)
+            return;
+
+        var target = FirstErrorLocator.Find(FilteredLogs);
+        var found = target.HasValue && SelectSearchMatch(terminal, target.Value);
+        if (!found)
+        {
+            terminal.ClearSelection();
+            terminal.EnsureCaretIsVisible();
+        }
+
+        SearchResultText = found ? "First error" : "End of log";
+    }
+
+    private static bool SelectSearchMatch(TerminalControlModel terminal, LogSearchTarget target)
+    {
+        var count = terminal.Search(target.Text);
+        if (count == 0)
+            return false;
+
+        for (var i = 0; i < Math.Min(target.MatchIndex, count - 1); i++)
+            terminal.SelectNextSearchResult();
+
+        return true;
     }
 
     private async Task CopyLogsToClipboard()
@@ -451,8 +547,39 @@ public partial class JobDetailViewModel : ReactiveObject, IHaveHeader, IDisposab
         this.RaisePropertyChanged(nameof(HasCurrentPhase));
         this.RaisePropertyChanged(nameof(CurrentPhaseDisplay));
         this.RaisePropertyChanged(nameof(ElapsedText));
+        this.RaisePropertyChanged(nameof(ShortCommitSha));
+        ResolveWorkerName();
         PublishHeader();
     }
+
+    /// <summary>
+    /// Shows which worker ran the job. Worker names come from the admin-only worker list,
+    /// so the short worker id is shown when the names cannot be read.
+    /// </summary>
+    private void ResolveWorkerName()
+    {
+        if (Job.WorkerId is not { } workerId || workerId == resolvedWorkerId)
+            return;
+
+        resolvedWorkerId = workerId;
+        WorkerName = ShortId(workerId);
+        Observable.FromAsync(() => _client.GetWorkersAsync())
+            .Select(workers => workers.FirstOrDefault(worker => worker.Id == workerId)?.Name)
+            .Catch(Observable.Return<string?>(null))
+            .Where(name => !string.IsNullOrWhiteSpace(name))
+            .ObserveOn(RxSchedulers.MainThreadScheduler)
+            .Subscribe(name =>
+            {
+                if (Job.WorkerId != workerId)
+                    return;
+
+                WorkerName = name;
+                PublishHeader();
+            })
+            .DisposeWith(disposables);
+    }
+
+    private static string ShortId(Guid id) => id.ToString("N")[..8];
 
     private void RefreshElapsed()
     {
@@ -552,7 +679,7 @@ public partial class JobDetailViewModel : ReactiveObject, IHaveHeader, IDisposab
 
     private string HeaderJobName =>
         string.IsNullOrWhiteSpace(Job.Version)
-            ? Job.Id.ToString("N")[..8]
+            ? ShortId(Job.Id)
             : VersionDisplay.Visible(Job.Version) ?? Job.Version;
 
     private string HeaderSubtitle
@@ -565,6 +692,12 @@ public partial class JobDetailViewModel : ReactiveObject, IHaveHeader, IDisposab
                 parts.Add($"Current phase: {CurrentPhaseDisplay}");
 
             parts.Add($"Elapsed: {ElapsedText}");
+
+            if (!string.IsNullOrEmpty(WorkerName))
+                parts.Add($"Worker: {WorkerName}");
+
+            if (ShortCommitSha is { } sha)
+                parts.Add($"Commit: {sha}");
 
             if (IsStreaming)
                 parts.Add("Streaming");

@@ -150,18 +150,6 @@ public class ProjectDetailViewLayoutTests
     }
 
     [Fact]
-    public void JobDetailView_ShouldShowLiveElapsedTime()
-    {
-        var document = XDocument.Load(ProjectFilePath("Views", "JobDetailView.axaml"));
-        XNamespace axaml = "https://github.com/avaloniaui";
-
-        document.Descendants(axaml + "TextBlock")
-            .Select(textBlock => textBlock.Attribute("Text")?.Value)
-            .Should()
-            .Contain(["Elapsed:", "{Binding ElapsedText}"]);
-    }
-
-    [Fact]
     public void BuildsViewModel_ShouldBeAStandaloneSectionOverAllJobs()
     {
         var source = File.ReadAllText(ProjectFilePath("ViewModels", "BuildsViewModel.cs"));

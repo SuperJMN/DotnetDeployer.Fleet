@@ -28,7 +28,7 @@ public class JobPhaseTreeTests
         tree.Phases.Single().Should().BeSameAs(container);
         tree.Phases.Single().Content.Should().BeSameAs(row);
         row.Icon.Should().Be("✅");
-        row.DurationText.Should().Be("1.2s");
+        row.DurationText.Should().Be("0:01");
     }
 
     [Fact]
@@ -57,7 +57,7 @@ public class JobPhaseTreeTests
         tree.Phases.Single().Content.Children.Single().Should().BeSameAs(childContainer);
         tree.Phases.Single().Content.Children.Single().Content.Should().BeSameAs(childRow);
         childRow.Icon.Should().Be("✅");
-        childRow.DurationText.Should().Be("80 ms");
+        childRow.DurationText.Should().Be("0:00");
     }
 
     private static JobPhase Phase(
