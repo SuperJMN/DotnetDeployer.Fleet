@@ -657,6 +657,17 @@ public partial class JobViewModel : ReactiveObject, IOpenable
     public string? ShortCommitSha => JobNaming.ShortSha(Job.TriggerCommitSha);
 
     /// <summary>
+    /// Signals when a value job lists search or order by changes: the project, the name or
+    /// version, the status or the queue time. Refreshes with the same data stay quiet.
+    /// </summary>
+    internal IObservable<System.Reactive.Unit> PlacementChanges =>
+        this.WhenAnyValue(vm => vm.Job, vm => vm.ProjectName, vm => vm.Version,
+                (_, _, _) => (ProjectName, DisplayName, Version, StatusText, Job.EnqueuedAt))
+            .DistinctUntilChanged()
+            .Skip(1)
+            .Select(_ => System.Reactive.Unit.Default);
+
+    /// <summary>
     /// Pushes a fresher snapshot of the underlying <see cref="DeploymentJob"/> into this VM,
     /// raising change notifications for the user-visible fields. Used when the deployment is
     /// renamed (a version was detected) or any other field is updated by the coordinator.

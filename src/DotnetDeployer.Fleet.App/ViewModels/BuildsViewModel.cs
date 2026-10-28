@@ -62,13 +62,16 @@ public partial class BuildsViewModel : ReactiveObject, IHaveHeader, IDisposable
         BuildsStatus = ListStatus.Of(Builds, this.WhenAnyValue(vm => vm.IsLoading));
         disposables.Add(BuildsStatus);
 
-        var filter = this.WhenAnyValue(vm => vm.SearchText)
-            .Select(text => (Func<JobViewModel, bool>)(build => build.Matches(text)));
+        // Rows are re-placed only when a value the list searches or orders by changes, and then
+        // only moved: rows update their own cells, and a Refresh reaching the binding would remove
+        // and re-insert the row, which makes the table rebuild it and drop the selection. The filter
+        // takes the search as state because the predicate-observable overload turns a Refresh into
+        // a Replace.
         disposables.Add(Builds.ToObservableChangeSet()
-            .AutoRefresh(build => build.Job)
-            .AutoRefresh(build => build.ProjectName)
-            .Filter(filter)
+            .AutoRefreshOnObservable(build => build.PlacementChanges)
+            .Filter(this.WhenAnyValue(vm => vm.SearchText), (text, build) => build.Matches(text))
             .Sort(SortExpressionComparer<JobViewModel>.Descending(build => build.Job.EnqueuedAt))
+            .WhereReasonsAreNot(ListChangeReason.Refresh)
             .Bind(out filteredBuilds)
             .Subscribe());
         disposables.Add(Observable.Merge(

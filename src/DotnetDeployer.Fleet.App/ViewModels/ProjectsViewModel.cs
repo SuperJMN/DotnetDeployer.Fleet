@@ -73,16 +73,17 @@ public partial class ProjectsViewModel : ReactiveObject, IHaveHeader, IDisposabl
         _disposables.Add(ProjectsStatus);
 
         // TableView neither sorts nor filters, so the list is shaped here. Rows are re-placed
-        // when their project or their job in progress changes.
-        var filter = this.WhenAnyValue(vm => vm.SearchText)
-            .Select(text => (Func<ProjectViewModel, bool>)(project => project.Matches(text)));
+        // only when a value the list searches or orders by changes, and then only moved: rows
+        // update their own cells, and a Refresh reaching the binding would remove and re-insert
+        // the row, which makes the table rebuild it and drop the selection. The filter takes the
+        // search as state because the predicate-observable overload turns a Refresh into a Replace.
         var comparer = this.WhenAnyValue(vm => vm.SelectedSort)
             .Select(option => ProjectOrdering.For(option.Order));
         _disposables.Add(allProjects.ToObservableChangeSet()
-            .AutoRefresh(project => project.Project)
-            .AutoRefresh(project => project.ActiveJob)
-            .Filter(filter)
+            .AutoRefreshOnObservable(project => project.PlacementChanges)
+            .Filter(this.WhenAnyValue(vm => vm.SearchText), (text, project) => project.Matches(text))
             .Sort(comparer)
+            .WhereReasonsAreNot(ListChangeReason.Refresh)
             .Bind(out projects)
             .Subscribe());
 
@@ -317,6 +318,17 @@ public partial class ProjectViewModel : ReactiveObject, IOpenable
         : Tone.Neutral;
 
     public string LastDeployCommitText => JobNaming.ShortSha(Project.LastDeployCommitSha) ?? "--";
+
+    /// <summary>
+    /// Signals when a value the project list searches or orders by changes: the name, the
+    /// repository, the last deploy or the recent activity. Refreshes with the same data stay quiet.
+    /// </summary>
+    internal IObservable<Unit> PlacementChanges =>
+        this.WhenAnyValue(vm => vm.Project, vm => vm.ActiveJob,
+                (_, _) => (Project.Name, Project.GitUrl, Project.LastDeployFinishedAt, RecentActivityAt))
+            .DistinctUntilChanged()
+            .Skip(1)
+            .Select(_ => Unit.Default);
 
     /// <summary>The job of this project that is queued or running right now, if any.</summary>
     public DeploymentJob? ActiveJob

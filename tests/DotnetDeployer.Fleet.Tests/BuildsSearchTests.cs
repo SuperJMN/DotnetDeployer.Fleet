@@ -88,6 +88,23 @@ public sealed class BuildsSearchTests
         vm.BuildsStatus.IsEmpty.Should().BeFalse();
     }
 
+    [Fact]
+    public async Task A_build_that_stops_matching_the_search_leaves_the_results_on_the_next_refresh()
+    {
+        var coordinator = new FakeCoordinator();
+        var project = coordinator.AddProject("Fleet");
+        var running = coordinator.AddJob(project, JobStatus.Running);
+        coordinator.AddJob(project, JobStatus.Succeeded);
+        using var vm = Builds(coordinator);
+        await vm.RefreshCommand.Execute().FirstAsync();
+        vm.SearchText = "running";
+
+        running.Status = JobStatus.Failed;
+        await vm.RefreshCommand.Execute().FirstAsync();
+
+        vm.FilteredBuilds.Should().BeEmpty();
+    }
+
     private static BuildsViewModel Builds(FakeCoordinator coordinator)
     {
         var context = Substitute.For<IConnectedFleetClientContext>();
