@@ -8,10 +8,13 @@ using DotnetDeployer.Fleet.Core.Domain;
 using ReactiveUI;
 using ReactiveUI.SourceGenerators;
 using Zafiro.Avalonia.Dialogs;
+using Zafiro.Avalonia.Dialogs.Views;
 using Zafiro.DivineBytes;
 using Zafiro.UI;
+using Zafiro.UI.Commands;
 using Zafiro.UI.Navigation;
 using Zafiro.UI.Shell.Utils;
+using DialogOption = Zafiro.Avalonia.Dialogs.Option;
 
 namespace DotnetDeployer.Fleet.App.ViewModels;
 
@@ -128,91 +131,83 @@ public partial class SecretsViewModel : ReactiveObject, IHaveHeader, IDisposable
             }
         }
 
-        var parsedEntries = lines
-            .Select(ParseEnvLine)
-            .Where(e => e is not null)
-            .Select(e => e!.Value)
-            .ToList();
-
-        var existingByName = Secrets.ToDictionary(s => s.Name, StringComparer.Ordinal);
-        var applied = new List<string>();
-
-        foreach (var (name, value) in parsedEntries)
+        var plan = SecretImportPlan.For(EnvFile.Parse(lines), Secrets.Select(s => s.Secret.Name));
+        if (plan.IsEmpty)
         {
-            try
-            {
-                await ApplyImportedSecret(existingByName, name, value);
-            }
-            catch (Exception ex)
-            {
-                throw new InvalidOperationException(PartialImportMessage(applied, parsedEntries.Count, name, ex), ex);
-            }
-
-            applied.Add(name);
-        }
-    }
-
-    private async Task ApplyImportedSecret(Dictionary<string, SecretViewModel> existingByName, string name, string value)
-    {
-        if (existingByName.TryGetValue(name, out var existing))
-        {
-            await _client.UpdateSecretAsync(existing.Secret.Id, name, value);
-            existing.Name = name;
-            existing.Value = value;
+            await _dialog.ShowMessage("Nothing to import", $"\"{file.Name}\" has no KEY=value entries.");
             return;
         }
 
-        var created = await _client.CreateSecretAsync(name, value);
-        var vm = new SecretViewModel(created, _client, _dialog, _notificationService, this);
-        Secrets.Add(vm);
-        existingByName[name] = vm;
+        if (!await ConfirmImport(plan))
+        {
+            return;
+        }
+
+        var summary = await Import(plan);
+        await _dialog.ShowMessage("Import finished", summary.Describe(),
+            tone: summary.Failed.Count > 0 ? DialogTone.Warning : DialogTone.Information);
     }
 
-    private static string PartialImportMessage(IReadOnlyList<string> applied, int total, string failed, Exception error)
+    /// <summary>
+    /// Shows what the import creates and overwrites. Cancel is the default, so only the import
+    /// button goes ahead; it is marked destructive when existing values would be replaced.
+    /// </summary>
+    private Task<bool> ConfirmImport(SecretImportPlan plan)
     {
-        var appliedText = applied.Count == 0
-            ? "No secrets were imported."
-            : $"Imported {applied.Count} of {total} secrets: {string.Join(", ", applied)}.";
-        return $"Import stopped at \"{failed}\": {error.Message.TrimEnd('.')}. {appliedText}";
+        var overwrites = plan.ToOverwrite.Count > 0;
+        return _dialog.Show(new MessageDialogViewModel(plan.Describe()), "Import secrets?", closeable => new IOption[]
+        {
+            new DialogOption("Cancel",
+                ReactiveCommand.Create(closeable.Dismiss).Enhance(),
+                new Settings { IsCancel = true, IsDefault = true, Role = OptionRole.Cancel }),
+            new DialogOption("Import",
+                ReactiveCommand.Create(closeable.Close).Enhance(),
+                new Settings { Role = overwrites ? OptionRole.Destructive : OptionRole.Primary }),
+        }, tone: overwrites ? DialogTone.Warning : DialogTone.Neutral);
     }
 
-    private static (string Name, string Value)? ParseEnvLine(string line)
+    private async Task<SecretImportSummary> Import(SecretImportPlan plan)
     {
-        var text = line.Trim();
-        if (string.IsNullOrWhiteSpace(text) || text.StartsWith('#'))
-        {
-            return null;
-        }
+        var created = new List<string>();
+        var overwritten = new List<string>();
+        var failed = new List<(string Name, string Reason)>();
 
-        if (text.StartsWith("export ", StringComparison.Ordinal))
+        foreach (var (name, value) in plan.ToOverwrite)
         {
-            text = text["export ".Length..].TrimStart();
-        }
-
-        var separatorIndex = text.IndexOf('=');
-        if (separatorIndex <= 0)
-        {
-            return null;
-        }
-
-        var name = text[..separatorIndex].Trim();
-        if (string.IsNullOrWhiteSpace(name))
-        {
-            return null;
-        }
-
-        var value = text[(separatorIndex + 1)..].Trim();
-        if (value.Length >= 2)
-        {
-            var first = value[0];
-            var last = value[^1];
-            if ((first == '"' && last == '"') || (first == '\'' && last == '\''))
+            var existing = Secrets.FirstOrDefault(s => s.Secret.Name == name);
+            try
             {
-                value = value[1..^1];
+                if (existing is null)
+                {
+                    Secrets.Add(new SecretViewModel(await _client.CreateSecretAsync(name, value), _client, _dialog, _notificationService, this));
+                    created.Add(name);
+                    continue;
+                }
+
+                await _client.UpdateSecretAsync(existing.Secret.Id, name, value);
+                existing.ApplyImportedValue(value);
+                overwritten.Add(name);
+            }
+            catch (Exception ex)
+            {
+                failed.Add((name, ex.Message));
             }
         }
 
-        return (name, value);
+        foreach (var (name, value) in plan.ToCreate)
+        {
+            try
+            {
+                Secrets.Add(new SecretViewModel(await _client.CreateSecretAsync(name, value), _client, _dialog, _notificationService, this));
+                created.Add(name);
+            }
+            catch (Exception ex)
+            {
+                failed.Add((name, ex.Message));
+            }
+        }
+
+        return new SecretImportSummary(created, overwritten, failed);
     }
 
     internal void Remove(SecretViewModel vm) => Secrets.Remove(vm);
@@ -230,6 +225,7 @@ public partial class SecretViewModel : ReactiveObject
     [Reactive] private string _value;
     [Reactive] private bool _isEditing;
     [Reactive] private bool _isSaved;
+    [Reactive] private bool _isValueRevealed;
 
     public SecretViewModel(Secret secret, FleetApiClient client, IDialog dialog, INotificationService notificationService, SecretsViewModel parent)
     {
@@ -268,6 +264,23 @@ public partial class SecretViewModel : ReactiveObject
         this.RaisePropertyChanged(nameof(Secret));
     }
 
+    /// <summary>Takes a value written by an import, without discarding an edit in progress.</summary>
+    internal void ApplyImportedValue(string value)
+    {
+        Secret.Value = value;
+        if (!IsEditing)
+        {
+            Value = value;
+        }
+    }
+
+    private void Edit()
+    {
+        IsValueRevealed = false;
+        IsSaved = false;
+        IsEditing = true;
+    }
+
     private async Task DeleteAsync()
     {
         var confirmed = await _dialog.ConfirmDestructive(
@@ -286,20 +299,16 @@ public partial class SecretViewModel : ReactiveObject
         await _client.UpdateSecretAsync(Secret.Id, Name.Trim(), Value);
         Secret.Name = Name.Trim();
         Secret.Value = Value;
+        IsValueRevealed = false;
         IsEditing = false;
         IsSaved = true;
-    }
-
-    private void Edit()
-    {
-        IsSaved = false;
-        IsEditing = true;
     }
 
     private void Cancel()
     {
         Name = Secret.Name;
         Value = Secret.Value;
+        IsValueRevealed = false;
         IsEditing = false;
     }
 }

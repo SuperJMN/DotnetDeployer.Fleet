@@ -176,29 +176,6 @@ public sealed class CommandErrorReportingTests
     }
 
     [Fact]
-    public async Task An_interrupted_env_import_says_which_secrets_were_applied()
-    {
-        var api = new Api(request =>
-        {
-            if (request.Method == HttpMethod.Post && Body(request).Contains("\"BETA\""))
-                throw new HttpRequestException(NetworkError);
-            return Created(request);
-        });
-        var picker = Substitute.For<IFileSystemPicker>();
-        picker.PickForOpen(Arg.Any<FileTypeFilter[]>())
-            .Returns(Task.FromResult(Result.Success(Maybe.From<INamedByteSource>(
-                new NamedByteSource(".env", ByteSource.FromString("ALPHA=1\nBETA=2\nGAMMA=3", Encoding.UTF8))))));
-        using var secrets = new SecretsViewModel(api.Client, Substitute.For<IConnectedFleetClientContext>(),
-            picker, new ScriptedDialog(confirm: true), new RecordingNotifications());
-
-        await ExecuteIgnoringErrors(secrets.ImportFromEnvCommand);
-        var error = await secrets.WhenAnyValue(x => x.Error).Where(e => e is not null).FirstAsync().Timeout(TimeSpan.FromSeconds(5));
-
-        error.Should().Contain("\"BETA\"").And.Contain(NetworkError).And.Contain("1 of 3").And.Contain("ALPHA");
-        secrets.Secrets.Select(secret => secret.Name).Should().Equal("ALPHA");
-    }
-
-    [Fact]
     public async Task Failing_to_load_the_logs_of_a_finished_job_is_reported()
     {
         var notifications = new RecordingNotifications();

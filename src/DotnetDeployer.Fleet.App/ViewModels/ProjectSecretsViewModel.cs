@@ -110,6 +110,7 @@ public partial class ProjectSecretViewModel : ReactiveObject
     [Reactive] private string _value;
     [Reactive] private bool _isEditing;
     [Reactive] private bool _isSaved;
+    [Reactive] private bool _isValueRevealed;
 
     public ProjectSecretViewModel(Secret secret, Guid projectId, FleetApiClient client, IDialog dialog, INotificationService notificationService, ProjectSecretsViewModel parent)
     {
@@ -149,6 +150,13 @@ public partial class ProjectSecretViewModel : ReactiveObject
         this.RaisePropertyChanged(nameof(Secret));
     }
 
+    private void Edit()
+    {
+        IsValueRevealed = false;
+        IsSaved = false;
+        IsEditing = true;
+    }
+
     private async Task DeleteAsync()
     {
         var confirmed = await _dialog.ConfirmDestructive(
@@ -167,20 +175,16 @@ public partial class ProjectSecretViewModel : ReactiveObject
         await _client.UpdateProjectSecretAsync(_projectId, Secret.Id, Name.Trim(), Value);
         Secret.Name = Name.Trim();
         Secret.Value = Value;
+        IsValueRevealed = false;
         IsEditing = false;
         IsSaved = true;
-    }
-
-    private void Edit()
-    {
-        IsSaved = false;
-        IsEditing = true;
     }
 
     private void Cancel()
     {
         Name = Secret.Name;
         Value = Secret.Value;
+        IsValueRevealed = false;
         IsEditing = false;
     }
 }
