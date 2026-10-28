@@ -109,6 +109,7 @@ public partial class JobDetailViewModel : ReactiveObject, IHaveHeader, IDisposab
         CancelJobCommand = ReactiveCommand.CreateFromTask(CancelJobAsync,
             this.WhenAnyValue(x => x.CanCancel));
         RefreshArtifactsCommand.ThrownExceptions.Subscribe(ex => ErrorMessage = ex.Message).DisposeWith(disposables);
+        CopyLogsCommand.ThrownExceptions.NotifyWith(this.notificationService, "Cannot copy logs").DisposeWith(disposables);
         RefreshCommand = ReactiveCommand.CreateFromTask(() => RefreshSnapshot(default));
         RefreshCommand.Results().HandleErrorsWith(this.notificationService, Maybe.From("Cannot refresh job")).DisposeWith(disposables);
         _header = new BehaviorSubject<object>(CreateHeader());
@@ -288,9 +289,12 @@ public partial class JobDetailViewModel : ReactiveObject, IHaveHeader, IDisposab
     {
         try
         {
-            await StreamLogsAsync(new CancellationToken());
+            await StreamLogsAsync(CancellationToken.None);
         }
-        catch { /* ignore */ }
+        catch (Exception ex)
+        {
+            await notificationService.Show(ex.Message, Maybe.From("Cannot load logs"));
+        }
     }
 
     private void StartStreaming()
@@ -298,11 +302,19 @@ public partial class JobDetailViewModel : ReactiveObject, IHaveHeader, IDisposab
         _cts = new CancellationTokenSource();
         IsStreaming = true;
         PublishHeader();
-        _ = StreamLogsAsync(_cts.Token).ContinueWith(_ =>
+        var cts = _cts;
+        _ = StreamLogsAsync(cts.Token).ContinueWith(streaming =>
         {
             IsStreaming = false;
             CanCancel = false;
             PublishHeader();
+
+            // Leaving the page cancels the stream on purpose; anything else is a real failure.
+            if (streaming.IsFaulted && !cts.IsCancellationRequested && !isDisposed)
+            {
+                var message = streaming.Exception!.GetBaseException().Message;
+                Avalonia.Threading.Dispatcher.UIThread.Post(() => _ = notificationService.Show(message, Maybe.From("Log stream interrupted")));
+            }
         });
     }
 
@@ -552,6 +564,7 @@ public partial class JobDetailViewModel : ReactiveObject, IHaveHeader, IDisposab
             Artifact = artifact;
             this.parent = parent;
             SaveCommand = ReactiveCommand.CreateFromTask(() => this.parent.SaveArtifactAsync(Artifact));
+            SaveCommand.ThrownExceptions.NotifyWith(this.parent.notificationService, "Cannot save package");
         }
 
         public PackageArtifact Artifact { get; private set; }

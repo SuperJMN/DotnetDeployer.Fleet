@@ -72,6 +72,8 @@
                                                         Command="{Binding SaveConfigCommand}"
                                                         IsEnabled="{Binding !IsSaving}" />
                                     </Grid>
+                                    <TextBlock Text="Saved" FontSize="11" Opacity="0.6"
+                                               IsVisible="{Binding IsSaved}" />
                                 </StackPanel>
                             </FlexPanel>
 
