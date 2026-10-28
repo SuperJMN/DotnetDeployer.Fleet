@@ -5,7 +5,6 @@ using CSharpFunctionalExtensions;
 using DotnetDeployer.Fleet.Api.Client;
 using DotnetDeployer.Fleet.App.ViewModels;
 using DotnetDeployer.Fleet.Core.Domain;
-using ReactiveUI.Builder;
 using Zafiro.UI;
 using Zafiro.UI.Navigation;
 
@@ -13,13 +12,6 @@ namespace DotnetDeployer.Fleet.Tests;
 
 public sealed class DestructiveConfirmationTests
 {
-    static DestructiveConfirmationTests()
-    {
-        RxAppBuilder.CreateReactiveUIBuilder()
-            .WithCoreServices()
-            .BuildApp();
-    }
-
     [Fact]
     public async Task Deleting_a_project_asks_with_its_name_and_does_nothing_when_cancelled()
     {

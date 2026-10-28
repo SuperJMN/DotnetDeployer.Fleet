@@ -9,7 +9,6 @@ using CSharpFunctionalExtensions;
 using DotnetDeployer.Fleet.Api.Client;
 using DotnetDeployer.Fleet.App.ViewModels;
 using DotnetDeployer.Fleet.Core.Domain;
-using ReactiveUI.Builder;
 using Zafiro.Avalonia.Dialogs;
 using Zafiro.UI;
 using Zafiro.UI.Navigation;
@@ -23,13 +22,6 @@ public sealed class WorkersViewModelTests
         PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
         Converters = { new JsonStringEnumConverter() }
     };
-
-    static WorkersViewModelTests()
-    {
-        RxAppBuilder.CreateReactiveUIBuilder()
-            .WithCoreServices()
-            .BuildApp();
-    }
 
     [Fact]
     public async Task Connected_workers_are_listed_before_disconnected_ones()

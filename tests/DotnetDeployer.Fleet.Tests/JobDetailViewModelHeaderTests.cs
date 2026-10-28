@@ -5,19 +5,11 @@ using CSharpFunctionalExtensions;
 using DotnetDeployer.Fleet.Api.Client;
 using DotnetDeployer.Fleet.Core.Domain;
 using DotnetDeployer.Fleet.App.ViewModels;
-using ReactiveUI.Builder;
 
 namespace DotnetDeployer.Fleet.Tests;
 
 public sealed class JobDetailViewModelHeaderTests
 {
-    static JobDetailViewModelHeaderTests()
-    {
-        RxAppBuilder.CreateReactiveUIBuilder()
-            .WithCoreServices()
-            .BuildApp();
-    }
-
     [Fact]
     public async Task Header_ShouldSummarizeTheViewedJobAndExposeStatusActions()
     {
