@@ -15,6 +15,8 @@ public interface ISettingsService
     void ClearCredentials();
     AppTheme GetTheme();
     void SetTheme(AppTheme theme);
+    ProjectSortOrder GetProjectSortOrder();
+    void SetProjectSortOrder(ProjectSortOrder order);
 }
 
 public sealed record LoginCredentials(string Username, string Password);
@@ -25,6 +27,7 @@ public class InMemorySettingsService : ISettingsService
     private string? _token;
     private LoginCredentials? credentials;
     private AppTheme theme;
+    private ProjectSortOrder projectSortOrder;
 
     public string? GetEndpoint() => _endpoint;
     public void SetEndpoint(string? endpoint) => _endpoint = endpoint;
@@ -36,6 +39,8 @@ public class InMemorySettingsService : ISettingsService
     public void ClearCredentials() => credentials = null;
     public AppTheme GetTheme() => theme;
     public void SetTheme(AppTheme value) => theme = value;
+    public ProjectSortOrder GetProjectSortOrder() => projectSortOrder;
+    public void SetProjectSortOrder(ProjectSortOrder order) => projectSortOrder = order;
 }
 
 public class FileSettingsService : ISettingsService
@@ -80,6 +85,11 @@ public class FileSettingsService : ISettingsService
         Enum.TryParse<AppTheme>(_data.GetValueOrDefault("theme"), out var theme) ? theme : AppTheme.System;
 
     public void SetTheme(AppTheme value) { _data["theme"] = value.ToString(); Save(); }
+
+    public ProjectSortOrder GetProjectSortOrder() =>
+        Enum.TryParse<ProjectSortOrder>(_data.GetValueOrDefault("projectSortOrder"), out var order) ? order : ProjectSortOrder.LastDeploy;
+
+    public void SetProjectSortOrder(ProjectSortOrder order) { _data["projectSortOrder"] = order.ToString(); Save(); }
 
     private void Load()
     {

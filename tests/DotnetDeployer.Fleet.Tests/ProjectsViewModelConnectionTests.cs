@@ -30,7 +30,7 @@ public sealed class ProjectsViewModelConnectionTests
             Substitute.For<Zafiro.UI.IFileSystemPicker>(),
             Substitute.For<Zafiro.Avalonia.Dialogs.IDialog>(),
             Substitute.For<Zafiro.UI.INotificationService>(),
-            new InMemoryPackageTargetSelectionStore());
+            new InMemoryPackageTargetSelectionStore(), new InMemorySettingsService());
 
         await vm.RefreshCommand.Execute().FirstAsync();
 
@@ -57,7 +57,7 @@ public sealed class ProjectsViewModelConnectionTests
             Substitute.For<Zafiro.UI.IFileSystemPicker>(),
             Substitute.For<Zafiro.Avalonia.Dialogs.IDialog>(),
             notificationService,
-            new InMemoryPackageTargetSelectionStore());
+            new InMemoryPackageTargetSelectionStore(), new InMemorySettingsService());
 
         await vm.AddProjectCommand.Execute().FirstAsync();
         await notificationShown.Task.WaitAsync(TimeSpan.FromSeconds(1));

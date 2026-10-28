@@ -1,8 +1,10 @@
 <UserControl xmlns="https://github.com/avaloniaui"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              xmlns:vm="clr-namespace:DotnetDeployer.Fleet.App.ViewModels"
+             xmlns:views="clr-namespace:DotnetDeployer.Fleet.App.Views"
              xmlns:icons="clr-namespace:Optris.Icons.Avalonia;assembly=Optris.Icons.Avalonia"
              xmlns:converters="clr-namespace:DotnetDeployer.Fleet.App.Converters"
+             xmlns:theming="clr-namespace:DotnetDeployer.Fleet.App.Theming"
              x:Class="DotnetDeployer.Fleet.App.Views.ProjectsView"
              xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
              xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
@@ -13,10 +15,48 @@
     <Interaction.Behaviors>
         <DataContextChangedTrigger>
             <InvokeCommandAction Command="{Binding RefreshCommand}" />
+            <InvokeCommandAction Command="{Binding AutoRefresh.StartCommand}" />
         </DataContextChangedTrigger>
+        <AttachedToVisualTreeTrigger>
+            <InvokeCommandAction Command="{Binding AutoRefresh.StartCommand}" />
+        </AttachedToVisualTreeTrigger>
+        <DetachedFromVisualTreeTrigger>
+            <InvokeCommandAction Command="{Binding AutoRefresh.StopCommand}" />
+        </DetachedFromVisualTreeTrigger>
     </Interaction.Behaviors>
 
-    <DockPanel Margin="16">
+    <UserControl.Styles>
+        <!-- Wide screens get the table; narrow ones a one-column list without horizontal scroll. -->
+        <Style Selector="ScrollViewer.Compact">
+            <Setter Property="IsVisible" Value="False" />
+        </Style>
+        <ContainerQuery Name="ProjectsRoot" Query="max-width:719">
+            <Style Selector="TableView.Wide">
+                <Setter Property="IsVisible" Value="False" />
+            </Style>
+            <Style Selector="ScrollViewer.Compact">
+                <Setter Property="IsVisible" Value="True" />
+            </Style>
+        </ContainerQuery>
+    </UserControl.Styles>
+
+    <DockPanel Margin="16" Container.Name="ProjectsRoot" Container.Sizing="Width">
+
+        <!-- Search and order -->
+        <FlexPanel DockPanel.Dock="Top" Wrap="Wrap" Gap="8" AlignItems="Center" Margin="0,0,0,8">
+            <TextBox Text="{Binding SearchText}"
+                     PlaceholderText="Search by name or repository"
+                     AutomationProperties.Name="Search projects"
+                     FlexPanel.Grow="1"
+                     FlexPanel.Basis="240" />
+            <StackPanel Orientation="Horizontal" Spacing="8">
+                <TextBlock Text="Sort by" VerticalAlignment="Center" Opacity="0.7" />
+                <ComboBox ItemsSource="{Binding SortOptions}"
+                          SelectedItem="{Binding SelectedSort}"
+                          AutomationProperties.Name="Sort projects by"
+                          MinWidth="160" />
+            </StackPanel>
+        </FlexPanel>
 
         <!-- Loading indicator -->
         <ProgressBar DockPanel.Dock="Top" IsIndeterminate="True"
@@ -41,116 +81,149 @@
             </StackPanel>
         </Border>
 
-        <!-- Project list: card grid that adapts column count to width -->
-        <ScrollViewer>
-            <ItemsControl ItemsSource="{Binding Projects}">
-                <ItemsControl.ItemsPanel>
-                    <ItemsPanelTemplate>
-                        <BalancedWrapGrid MinItemWidth="280"
-                                          HorizontalSpacing="8"
-                                          VerticalSpacing="8"
-                                          VerticalAlignment="Top" />
-                    </ItemsPanelTemplate>
-                </ItemsControl.ItemsPanel>
-                <ItemsControl.ItemTemplate>
-                    <DataTemplate DataType="vm:ProjectViewModel">
-                        <Grid>
-                            <EnhancedButton Command="{Binding OpenCommand}"
-                                            Background="{DynamicResource SystemControlBackgroundAltHighBrush}"
-                                            BorderBrush="{DynamicResource SystemControlForegroundBaseLowBrush}"
-                                            BorderThickness="1"
-                                            CornerRadius="6"
-                                            Padding="12"
-                                            HorizontalAlignment="Stretch"
-                                            HorizontalContentAlignment="Stretch"
-                                            VerticalContentAlignment="Stretch"
-                                            ToolTip.Tip="Open project">
-                                <Grid ColumnDefinitions="64,*"
-                                      RowDefinitions="Auto,42"
-                                      IsHitTestVisible="False">
-                                    <StackPanel Grid.Column="1"
-                                                Spacing="4"
-                                                MinWidth="0">
-                                        <TextBlock Text="{Binding Project.Name}"
-                                                   FontWeight="SemiBold" FontSize="14" />
-                                        <TextBlock Text="{Binding Project.GitUrl}"
-                                                   Opacity="0.6" FontSize="12"
-                                                   TextTrimming="CharacterEllipsis" />
-                                        <TextBlock FontSize="11" Opacity="0.5">
-                                            <Run Text="Branch: " />
-                                            <Run Text="{Binding Project.Branch}" />
-                                            <Run Text=" · Polling: " />
-                                            <Run Text="{Binding PollingText}" />
-                                        </TextBlock>
-                                    </StackPanel>
-                                </Grid>
-                            </EnhancedButton>
+        <Border DockPanel.Dock="Top" Classes="ListPlaceholder" IsVisible="{Binding HasNoMatches}">
+            <StackPanel>
+                <TextBlock Classes="Title" Text="No matching projects" />
+                <TextBlock Classes="Hint" Text="No project name or repository contains the search text." />
+            </StackPanel>
+        </Border>
 
-                            <EnhancedButton Width="56"
-                                            Height="56"
-                                            Margin="12"
-                                            Padding="6"
-                                            CornerRadius="6"
-                                            ClipToBounds="True"
-                                            HorizontalAlignment="Left"
-                                            VerticalAlignment="Top"
-                                            HorizontalContentAlignment="Stretch"
-                                            VerticalContentAlignment="Stretch"
-                                            Background="{DynamicResource SystemControlBackgroundBaseLowBrush}"
-                                            BorderBrush="{DynamicResource SystemControlForegroundBaseLowBrush}"
-                                            BorderThickness="1"
-                                            ToolTip.Tip="Change icon"
-                                            AutomationProperties.Name="Change icon"
-                                            Command="{Binding ChangeIconCommand}">
-                                <Grid>
+        <Panel IsVisible="{Binding HasVisibleProjects}">
+            <!-- Wide: one row per project; the whole row opens it. -->
+            <TableView Classes="Wide"
+                       ItemsSource="{Binding Projects}"
+                       views:TableRowActivation.IsEnabled="True">
+                <TableView.Columns>
+                    <TableViewColumn Width="48" CanUserResize="False">
+                        <TableViewColumn.CellTemplate>
+                            <DataTemplate x:DataType="vm:ProjectViewModel">
+                                <Panel Width="32" Height="32" ClipToBounds="True">
                                     <Image Source="{Binding ProjectIconBytes, Converter={x:Static converters:ProjectIconConverters.ByteArrayToBitmap}}"
                                            Stretch="Uniform"
                                            IsVisible="{Binding HasProjectIcon}" />
                                     <icons:Icon Value="mdi-folder-outline"
-                                                Width="28"
-                                                Height="28"
+                                                FontSize="20"
                                                 Opacity="0.65"
                                                 HorizontalAlignment="Center"
                                                 VerticalAlignment="Center"
                                                 IsVisible="{Binding HasNoProjectIcon}" />
-                                </Grid>
-                            </EnhancedButton>
+                                </Panel>
+                            </DataTemplate>
+                        </TableViewColumn.CellTemplate>
+                    </TableViewColumn>
+                    <TableViewColumn Header="Project" Width="2*">
+                        <TableViewColumn.CellTemplate>
+                            <DataTemplate x:DataType="vm:ProjectViewModel">
+                                <StackPanel Spacing="2" VerticalAlignment="Center">
+                                    <TextBlock Text="{Binding Project.Name}"
+                                               FontWeight="SemiBold"
+                                               TextTrimming="CharacterEllipsis"
+                                               ToolTip.Tip="{Binding Project.GitUrl}" />
+                                    <StackPanel Orientation="Horizontal" Spacing="4"
+                                                IsVisible="{Binding HasActiveJob}"
+                                                theming:Toned.Tone="{Binding ActiveJobTone}">
+                                        <ContentControl Content="{Binding ActiveJobIcon}" IconOptions.Size="12" />
+                                        <TextBlock Text="{Binding ActiveJobText}" FontSize="12" />
+                                    </StackPanel>
+                                </StackPanel>
+                            </DataTemplate>
+                        </TableViewColumn.CellTemplate>
+                    </TableViewColumn>
+                    <TableViewColumn Header="Last deploy" Width="1.5*">
+                        <TableViewColumn.CellTemplate>
+                            <DataTemplate x:DataType="vm:ProjectViewModel">
+                                <TextBlock Text="{Binding LastDeployText}"
+                                           ToolTip.Tip="{Binding LastDeployTimestampText}"
+                                           VerticalAlignment="Center"
+                                           TextTrimming="CharacterEllipsis" />
+                            </DataTemplate>
+                        </TableViewColumn.CellTemplate>
+                    </TableViewColumn>
+                    <TableViewColumn Header="Status" Width="250">
+                        <TableViewColumn.CellTemplate>
+                            <DataTemplate x:DataType="vm:ProjectViewModel">
+                                <StackPanel Orientation="Horizontal" Spacing="6" VerticalAlignment="Center"
+                                            theming:Toned.Tone="{Binding LastDeployStatusTone}">
+                                    <ContentControl Content="{Binding LastDeployStatusIcon}"
+                                                    IconOptions.Size="16"
+                                                    IsVisible="{Binding HasLastDeployStatus}" />
+                                    <TextBlock Text="{Binding LastDeployStatusText}"
+                                               TextTrimming="CharacterEllipsis" />
+                                </StackPanel>
+                            </DataTemplate>
+                        </TableViewColumn.CellTemplate>
+                    </TableViewColumn>
+                    <TableViewColumn Header="Commit" Width="90" Binding="{Binding LastDeployCommitText}" />
+                    <TableViewColumn Header="Polling" Width="110" Binding="{Binding PollingText}" />
+                    <TableViewColumn Width="48" CanUserResize="False">
+                        <TableViewColumn.CellTemplate>
+                            <DataTemplate x:DataType="vm:ProjectViewModel">
+                                <views:ProjectActionsButton />
+                            </DataTemplate>
+                        </TableViewColumn.CellTemplate>
+                    </TableViewColumn>
+                </TableView.Columns>
+            </TableView>
 
-                            <FlexPanel Wrap="Wrap"
-                                       Gap="8"
-                                       AlignItems="Center"
-                                       JustifyContent="End"
-                                       HorizontalAlignment="Right"
-                                       VerticalAlignment="Bottom"
-                                       Margin="12">
-                                <EnhancedButton ToolTip.Tip="Edit" AutomationProperties.Name="Edit" Command="{Binding EditCommand}">
-                                    <icons:Icon Value="mdi-pencil" />
+            <!-- Narrow: one compact row per project. -->
+            <ScrollViewer Classes="Compact" HorizontalScrollBarVisibility="Disabled">
+                <ItemsControl ItemsSource="{Binding Projects}">
+                    <ItemsControl.ItemTemplate>
+                        <DataTemplate DataType="vm:ProjectViewModel">
+                            <Grid ColumnDefinitions="*,Auto" Margin="0,2">
+                                <EnhancedButton Grid.ColumnSpan="2"
+                                                Command="{Binding OpenCommand}"
+                                                Background="{DynamicResource SystemControlBackgroundAltHighBrush}"
+                                                BorderBrush="{DynamicResource SystemControlForegroundBaseLowBrush}"
+                                                BorderThickness="1"
+                                                CornerRadius="6"
+                                                Padding="12,8,48,8"
+                                                HorizontalAlignment="Stretch"
+                                                HorizontalContentAlignment="Stretch"
+                                                ToolTip.Tip="Open project">
+                                    <Grid ColumnDefinitions="32,*" ColumnSpacing="12">
+                                        <Panel Width="32" Height="32" ClipToBounds="True" VerticalAlignment="Top">
+                                            <Image Source="{Binding ProjectIconBytes, Converter={x:Static converters:ProjectIconConverters.ByteArrayToBitmap}}"
+                                                   Stretch="Uniform"
+                                                   IsVisible="{Binding HasProjectIcon}" />
+                                            <icons:Icon Value="mdi-folder-outline"
+                                                        FontSize="20"
+                                                        Opacity="0.65"
+                                                        HorizontalAlignment="Center"
+                                                        VerticalAlignment="Center"
+                                                        IsVisible="{Binding HasNoProjectIcon}" />
+                                        </Panel>
+                                        <StackPanel Grid.Column="1" Spacing="2">
+                                            <TextBlock Text="{Binding Project.Name}"
+                                                       FontWeight="SemiBold"
+                                                       TextTrimming="CharacterEllipsis" />
+                                            <StackPanel Orientation="Horizontal" Spacing="6"
+                                                        theming:Toned.Tone="{Binding LastDeployStatusTone}">
+                                                <ContentControl Content="{Binding LastDeployStatusIcon}"
+                                                                IconOptions.Size="14"
+                                                                IsVisible="{Binding HasLastDeployStatus}" />
+                                                <TextBlock Text="{Binding LastDeployText}"
+                                                           FontSize="12"
+                                                           TextTrimming="CharacterEllipsis" />
+                                            </StackPanel>
+                                            <StackPanel Orientation="Horizontal" Spacing="4"
+                                                        IsVisible="{Binding HasActiveJob}"
+                                                        theming:Toned.Tone="{Binding ActiveJobTone}">
+                                                <ContentControl Content="{Binding ActiveJobIcon}" IconOptions.Size="12" />
+                                                <TextBlock Text="{Binding ActiveJobText}" FontSize="12" />
+                                            </StackPanel>
+                                        </StackPanel>
+                                    </Grid>
                                 </EnhancedButton>
-                                <!-- Rare and destructive actions stay out of the way, behind a menu. -->
-                                <EnhancedButton ToolTip.Tip="More actions" AutomationProperties.Name="More actions">
-                                    <EnhancedButton.Flyout>
-                                        <MenuFlyout Placement="BottomEdgeAlignedRight">
-                                            <MenuItem Header="Use automatic icon" Command="{Binding ResetIconCommand}">
-                                                <MenuItem.Icon>
-                                                    <icons:Icon Value="mdi-auto-fix" />
-                                                </MenuItem.Icon>
-                                            </MenuItem>
-                                            <Separator />
-                                            <MenuItem Header="Delete project…" Command="{Binding DeleteCommand}">
-                                                <MenuItem.Icon>
-                                                    <icons:Icon Value="mdi-delete-outline" />
-                                                </MenuItem.Icon>
-                                            </MenuItem>
-                                        </MenuFlyout>
-                                    </EnhancedButton.Flyout>
-                                    <icons:Icon Value="mdi-dots-vertical" />
-                                </EnhancedButton>
-                            </FlexPanel>
-                        </Grid>
-                    </DataTemplate>
-                </ItemsControl.ItemTemplate>
-            </ItemsControl>
-        </ScrollViewer>
+                                <views:ProjectActionsButton Grid.Column="1"
+                                                            Margin="0,0,8,0"
+                                                            VerticalAlignment="Center" />
+                            </Grid>
+                        </DataTemplate>
+                    </ItemsControl.ItemTemplate>
+                </ItemsControl>
+            </ScrollViewer>
+        </Panel>
 
     </DockPanel>
 

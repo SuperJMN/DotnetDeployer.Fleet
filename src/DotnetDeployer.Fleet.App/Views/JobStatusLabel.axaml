@@ -1,0 +1,17 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="clr-namespace:DotnetDeployer.Fleet.App.ViewModels"
+             xmlns:theming="clr-namespace:DotnetDeployer.Fleet.App.Theming"
+             x:Class="DotnetDeployer.Fleet.App.Views.JobStatusLabel"
+             x:DataType="vm:JobViewModel">
+
+    <StackPanel Orientation="Horizontal" Spacing="6" VerticalAlignment="Center"
+                theming:Toned.Tone="{Binding StatusTone}">
+        <ContentControl Content="{Binding StatusIcon}" IconOptions.Size="16" />
+        <TextBlock Text="{Binding StatusText}"
+                   FontWeight="SemiBold"
+                   TextTrimming="CharacterEllipsis"
+                   ToolTip.Tip="{Binding StatusText}" />
+    </StackPanel>
+
+</UserControl>

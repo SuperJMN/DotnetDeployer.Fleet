@@ -34,7 +34,7 @@ public sealed class DestructiveConfirmationTests
         var api = new RecordingApi();
         var dialog = new ScriptedDialog(confirm: true);
         var parent = new ProjectsViewModel(Substitute.For<IConnectedFleetClientContext>(), Substitute.For<INavigator>(),
-            Substitute.For<IFileSystemPicker>(), dialog, Substitute.For<INotificationService>(), new InMemoryPackageTargetSelectionStore());
+            Substitute.For<IFileSystemPicker>(), dialog, Substitute.For<INotificationService>(), new InMemoryPackageTargetSelectionStore(), new InMemorySettingsService());
         var vm = new ProjectViewModel(project, api.Client, Substitute.For<INavigator>(), parent,
             Substitute.For<IFileSystemPicker>(), dialog, Substitute.For<INotificationService>());
 

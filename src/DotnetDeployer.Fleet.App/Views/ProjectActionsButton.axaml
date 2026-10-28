@@ -1,0 +1,42 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="clr-namespace:DotnetDeployer.Fleet.App.ViewModels"
+             xmlns:icons="clr-namespace:Optris.Icons.Avalonia;assembly=Optris.Icons.Avalonia"
+             x:Class="DotnetDeployer.Fleet.App.Views.ProjectActionsButton"
+             x:DataType="vm:ProjectViewModel">
+
+    <!-- The actions of a project row, kept behind one menu so the list stays compact. -->
+    <EnhancedButton ToolTip.Tip="Project actions"
+                    AutomationProperties.Name="Project actions"
+                    Padding="6"
+                    Background="Transparent"
+                    BorderThickness="0">
+        <EnhancedButton.Flyout>
+            <MenuFlyout Placement="BottomEdgeAlignedRight">
+                <MenuItem Header="Edit…" Command="{Binding EditCommand}">
+                    <MenuItem.Icon>
+                        <icons:Icon Value="mdi-pencil" />
+                    </MenuItem.Icon>
+                </MenuItem>
+                <MenuItem Header="Change icon…" Command="{Binding ChangeIconCommand}">
+                    <MenuItem.Icon>
+                        <icons:Icon Value="mdi-image-edit-outline" />
+                    </MenuItem.Icon>
+                </MenuItem>
+                <MenuItem Header="Use automatic icon" Command="{Binding ResetIconCommand}">
+                    <MenuItem.Icon>
+                        <icons:Icon Value="mdi-auto-fix" />
+                    </MenuItem.Icon>
+                </MenuItem>
+                <Separator />
+                <MenuItem Header="Delete project…" Command="{Binding DeleteCommand}">
+                    <MenuItem.Icon>
+                        <icons:Icon Value="mdi-delete-outline" />
+                    </MenuItem.Icon>
+                </MenuItem>
+            </MenuFlyout>
+        </EnhancedButton.Flyout>
+        <icons:Icon Value="mdi-dots-vertical" />
+    </EnhancedButton>
+
+</UserControl>

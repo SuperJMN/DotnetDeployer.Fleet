@@ -1,6 +1,8 @@
 <UserControl xmlns="https://github.com/avaloniaui"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              xmlns:vm="clr-namespace:DotnetDeployer.Fleet.App.ViewModels"
+             xmlns:views="clr-namespace:DotnetDeployer.Fleet.App.Views"
+             xmlns:converters="clr-namespace:DotnetDeployer.Fleet.App.Converters"
              x:Class="DotnetDeployer.Fleet.App.Views.BuildsView"
              x:DataType="vm:BuildsViewModel">
 
@@ -17,13 +19,34 @@
         </DetachedFromVisualTreeTrigger>
     </Interaction.Behaviors>
 
-    <DockPanel Margin="16">
+    <UserControl.Styles>
+        <!-- Wide screens get aligned columns; narrow ones a one-column list without horizontal scroll. -->
+        <Style Selector="ScrollViewer.Compact">
+            <Setter Property="IsVisible" Value="False" />
+        </Style>
+        <ContainerQuery Name="BuildsRoot" Query="max-width:899">
+            <Style Selector="TableView.Wide">
+                <Setter Property="IsVisible" Value="False" />
+            </Style>
+            <Style Selector="ScrollViewer.Compact">
+                <Setter Property="IsVisible" Value="True" />
+            </Style>
+        </ContainerQuery>
+    </UserControl.Styles>
+
+    <DockPanel Margin="16" Container.Name="BuildsRoot" Container.Sizing="Width">
 
         <TextBlock DockPanel.Dock="Top"
                    Text="{Binding Error}"
                    Foreground="{DynamicResource ToneDangerBrush}"
                    Margin="0,0,0,8"
                    IsVisible="{Binding Error, Converter={x:Static ObjectConverters.IsNotNull}}" />
+
+        <TextBox DockPanel.Dock="Top"
+                 Margin="0,0,0,8"
+                 Text="{Binding SearchText}"
+                 PlaceholderText="Search by project, version or status"
+                 AutomationProperties.Name="Search builds" />
 
         <ProgressBar DockPanel.Dock="Top"
                      IsIndeterminate="True"
@@ -45,9 +68,83 @@
             </StackPanel>
         </Border>
 
-        <ScrollViewer HorizontalScrollBarVisibility="Disabled">
-            <ItemsControl ItemsSource="{Binding Builds}" />
-        </ScrollViewer>
+        <Border DockPanel.Dock="Top" Classes="ListPlaceholder" IsVisible="{Binding HasNoMatches}">
+            <StackPanel>
+                <TextBlock Classes="Title" Text="No matching builds" />
+                <TextBlock Classes="Hint" Text="No build has a project, version or status that contains the search text." />
+            </StackPanel>
+        </Border>
+
+        <Panel IsVisible="{Binding HasVisibleBuilds}">
+            <!-- Wide: aligned columns; the whole row opens the build. -->
+            <TableView Classes="Wide"
+                       ItemsSource="{Binding FilteredBuilds}"
+                       views:TableRowActivation.IsEnabled="True">
+                <TableView.Columns>
+                    <TableViewColumn Width="44" CanUserResize="False">
+                        <TableViewColumn.CellTemplate>
+                            <DataTemplate x:DataType="vm:JobViewModel">
+                                <Panel Width="28" Height="28" ClipToBounds="True">
+                                    <Image Source="{Binding ProjectIconBytes, Converter={x:Static converters:ProjectIconConverters.ByteArrayToBitmap}}"
+                                           Stretch="Uniform"
+                                           IsVisible="{Binding HasProjectIcon}" />
+                                    <ContentControl Content="{Icon mdi-application-outline}"
+                                                    IconOptions.Size="20"
+                                                    Opacity="0.65"
+                                                    HorizontalAlignment="Center"
+                                                    VerticalAlignment="Center"
+                                                    IsVisible="{Binding HasNoProjectIcon}" />
+                                </Panel>
+                            </DataTemplate>
+                        </TableViewColumn.CellTemplate>
+                    </TableViewColumn>
+                    <TableViewColumn Header="Project" Width="1.5*">
+                        <TableViewColumn.CellTemplate>
+                            <DataTemplate x:DataType="vm:JobViewModel">
+                                <TextBlock Text="{Binding ProjectName}"
+                                           FontWeight="SemiBold"
+                                           VerticalAlignment="Center"
+                                           TextTrimming="CharacterEllipsis" />
+                            </DataTemplate>
+                        </TableViewColumn.CellTemplate>
+                    </TableViewColumn>
+                    <TableViewColumn Header="Version" Width="1.5*">
+                        <TableViewColumn.CellTemplate>
+                            <DataTemplate x:DataType="vm:JobViewModel">
+                                <TextBlock Text="{Binding DisplayName}"
+                                           ToolTip.Tip="{Binding Version}"
+                                           VerticalAlignment="Center"
+                                           TextTrimming="CharacterEllipsis" />
+                            </DataTemplate>
+                        </TableViewColumn.CellTemplate>
+                    </TableViewColumn>
+                    <TableViewColumn Header="Kind" Width="90" Binding="{Binding KindText}" />
+                    <TableViewColumn Header="Status" Width="250">
+                        <TableViewColumn.CellTemplate>
+                            <DataTemplate x:DataType="vm:JobViewModel">
+                                <views:JobStatusLabel />
+                            </DataTemplate>
+                        </TableViewColumn.CellTemplate>
+                    </TableViewColumn>
+                    <TableViewColumn Header="Finished" Width="150" Binding="{Binding FinishedText}" />
+                    <TableViewColumn Header="Duration" Width="90" Binding="{Binding ElapsedText}" />
+                    <TableViewColumn Header="Commit" Width="90">
+                        <TableViewColumn.CellTemplate>
+                            <DataTemplate x:DataType="vm:JobViewModel">
+                                <TextBlock Text="{Binding ShortCommitSha, FallbackValue='--', TargetNullValue='--'}"
+                                           ToolTip.Tip="{Binding Job.TriggerCommitSha}"
+                                           VerticalAlignment="Center" />
+                            </DataTemplate>
+                        </TableViewColumn.CellTemplate>
+                    </TableViewColumn>
+                </TableView.Columns>
+            </TableView>
+
+            <!-- Narrow: one compact row per build. -->
+            <ScrollViewer Classes="Compact" HorizontalScrollBarVisibility="Disabled">
+                <ItemsControl ItemsSource="{Binding FilteredBuilds}" />
+            </ScrollViewer>
+        </Panel>
 
     </DockPanel>
 

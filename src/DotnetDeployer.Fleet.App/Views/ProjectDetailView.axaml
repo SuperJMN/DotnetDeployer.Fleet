@@ -1,6 +1,7 @@
 <UserControl xmlns="https://github.com/avaloniaui"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              xmlns:vm="clr-namespace:DotnetDeployer.Fleet.App.ViewModels"
+             xmlns:views="clr-namespace:DotnetDeployer.Fleet.App.Views"
              x:Class="DotnetDeployer.Fleet.App.Views.ProjectDetailView"
              x:DataType="vm:ProjectDetailViewModel">
 
@@ -17,7 +18,22 @@
         </DetachedFromVisualTreeTrigger>
     </Interaction.Behaviors>
 
-    <DockPanel Margin="16">
+    <UserControl.Styles>
+        <!-- Wide screens get aligned columns; narrow ones a one-column list without horizontal scroll. -->
+        <Style Selector="ScrollViewer.Compact">
+            <Setter Property="IsVisible" Value="False" />
+        </Style>
+        <ContainerQuery Name="ProjectDetailRoot" Query="max-width:799">
+            <Style Selector="TableView.Wide">
+                <Setter Property="IsVisible" Value="False" />
+            </Style>
+            <Style Selector="ScrollViewer.Compact">
+                <Setter Property="IsVisible" Value="True" />
+            </Style>
+        </ContainerQuery>
+    </UserControl.Styles>
+
+    <DockPanel Margin="16" Container.Name="ProjectDetailRoot" Container.Sizing="Width">
 
         <TextBlock DockPanel.Dock="Top"
                    Text="{Binding Error}"
@@ -53,10 +69,50 @@
                 </StackPanel>
             </Border>
 
-            <ScrollViewer HorizontalScrollBarVisibility="Disabled"
-                          IsVisible="{Binding HasJobHistory}">
-                <ItemsControl ItemsSource="{Binding Jobs}" />
-            </ScrollViewer>
+            <Panel IsVisible="{Binding HasJobHistory}">
+                <!-- Wide: aligned columns; the whole row opens the job. -->
+                <TableView Classes="Wide"
+                           ItemsSource="{Binding Jobs}"
+                           views:TableRowActivation.IsEnabled="True">
+                    <TableView.Columns>
+                        <TableViewColumn Header="Version" Width="2*">
+                            <TableViewColumn.CellTemplate>
+                                <DataTemplate x:DataType="vm:JobViewModel">
+                                    <TextBlock Text="{Binding DisplayName}"
+                                               FontWeight="SemiBold"
+                                               ToolTip.Tip="{Binding Version}"
+                                               VerticalAlignment="Center"
+                                               TextTrimming="CharacterEllipsis" />
+                                </DataTemplate>
+                            </TableViewColumn.CellTemplate>
+                        </TableViewColumn>
+                        <TableViewColumn Header="Kind" Width="90" Binding="{Binding KindText}" />
+                        <TableViewColumn Header="Status" Width="250">
+                            <TableViewColumn.CellTemplate>
+                                <DataTemplate x:DataType="vm:JobViewModel">
+                                    <views:JobStatusLabel />
+                                </DataTemplate>
+                            </TableViewColumn.CellTemplate>
+                        </TableViewColumn>
+                        <TableViewColumn Header="Finished" Width="150" Binding="{Binding FinishedText}" />
+                        <TableViewColumn Header="Duration" Width="90" Binding="{Binding ElapsedText}" />
+                        <TableViewColumn Header="Commit" Width="90">
+                            <TableViewColumn.CellTemplate>
+                                <DataTemplate x:DataType="vm:JobViewModel">
+                                    <TextBlock Text="{Binding ShortCommitSha, FallbackValue='--', TargetNullValue='--'}"
+                                               ToolTip.Tip="{Binding Job.TriggerCommitSha}"
+                                               VerticalAlignment="Center" />
+                                </DataTemplate>
+                            </TableViewColumn.CellTemplate>
+                        </TableViewColumn>
+                    </TableView.Columns>
+                </TableView>
+
+                <!-- Narrow: one compact row per job. -->
+                <ScrollViewer Classes="Compact" HorizontalScrollBarVisibility="Disabled">
+                    <ItemsControl ItemsSource="{Binding Jobs}" />
+                </ScrollViewer>
+            </Panel>
         </Grid>
 
     </DockPanel>

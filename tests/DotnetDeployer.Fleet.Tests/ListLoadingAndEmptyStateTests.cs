@@ -170,7 +170,7 @@ public sealed class ListLoadingAndEmptyStateTests
 
     private static ProjectsViewModel Projects(IConnectedFleetClientContext context) =>
         new(context, Substitute.For<INavigator>(), Substitute.For<IFileSystemPicker>(), Substitute.For<IDialog>(),
-            Substitute.For<INotificationService>(), new InMemoryPackageTargetSelectionStore());
+            Substitute.For<INotificationService>(), new InMemoryPackageTargetSelectionStore(), new InMemorySettingsService());
 
     private static ProjectsViewModel Projects(FakeCoordinator coordinator) => Projects(Connected(coordinator.CreateClient()));
 
