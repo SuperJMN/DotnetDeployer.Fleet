@@ -168,6 +168,11 @@ public partial class ProjectViewModel : ReactiveObject
     public ReactiveCommand<Unit, Unit> ResetIconCommand { get; }
     public ReactiveCommand<Unit, Unit> DeleteCommand { get; }
 
+    /// <summary>How the project looks for new commits: "Manual" when polling is off, otherwise its interval.</summary>
+    public string PollingText => Project.PollingIntervalMinutes > 0
+        ? $"Every {Project.PollingIntervalMinutes} min"
+        : "Manual";
+
     public void ApplyProjectUpdate(Project updated)
     {
         if (updated.Id != Project.Id) return;
@@ -179,6 +184,7 @@ public partial class ProjectViewModel : ReactiveObject
 
         Project = updated;
         this.RaisePropertyChanged(nameof(Project));
+        this.RaisePropertyChanged(nameof(PollingText));
 
         if (iconInvalidated)
         {

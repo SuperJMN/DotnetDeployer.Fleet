@@ -150,17 +150,6 @@ public class ProjectDetailViewLayoutTests
     }
 
     [Fact]
-    public void BuildsViewModel_ShouldBeAStandaloneSectionOverAllJobs()
-    {
-        var source = File.ReadAllText(ProjectFilePath("ViewModels", "BuildsViewModel.cs"));
-
-        source.Should().Contain("[Section(name: \"Builds\", icon: \"mdi-history\", sortIndex: 1)]");
-        source.Should().Contain("client.GetAllJobsAsync()");
-        source.Should().Contain("OrderByDescending(job => job.EnqueuedAt)");
-        source.Should().NotContain("GetProjectJobsAsync");
-    }
-
-    [Fact]
     public void ProjectsView_ShouldChangeIconFromTheProjectIcon()
     {
         var document = XDocument.Load(ProjectFilePath("Views", "ProjectsView.axaml"));

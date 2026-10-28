@@ -32,7 +32,7 @@ public sealed partial class SettingsViewModel : ReactiveObject, IHaveHeader, IDi
         disposables.Add(ChangeEndpointCommand.Results().HandleErrorsWith(notificationService, Maybe.From("Connection failed")));
 
         LogoutCommand = ReactiveCommand.CreateFromTask(bootstrapper.Logout);
-        disposables.Add(LogoutCommand.Results().HandleErrorsWith(notificationService, Maybe.From("Sign in failed")));
+        disposables.Add(LogoutCommand.Results().HandleErrorsWith(notificationService, Maybe.From("Sign out failed")));
 
         disposables.Add(this.WhenAnyValue(vm => vm.SelectedTheme)
             .Skip(1)

@@ -79,9 +79,8 @@
                                         <TextBlock FontSize="11" Opacity="0.5">
                                             <Run Text="Branch: " />
                                             <Run Text="{Binding Project.Branch}" />
-                                            <Run Text="  |  Polling: " />
-                                            <Run Text="{Binding Project.PollingIntervalMinutes}" />
-                                            <Run Text=" min" />
+                                            <Run Text=" · Polling: " />
+                                            <Run Text="{Binding PollingText}" />
                                         </TextBlock>
                                     </StackPanel>
                                 </Grid>

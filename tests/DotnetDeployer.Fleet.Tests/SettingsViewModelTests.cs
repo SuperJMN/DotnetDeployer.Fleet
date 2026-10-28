@@ -65,11 +65,26 @@ public sealed class SettingsViewModelTests
         await connectionFlow.Received(1).Connect();
     }
 
+    [Fact]
+    public async Task A_failed_sign_out_is_reported_as_a_sign_out_failure()
+    {
+        var context = Substitute.For<IConnectedFleetClientContext>();
+        context.Require().Returns(Task.FromResult(Maybe.From(Result.Failure<FleetApiClient>("Coordinator unreachable"))));
+        var notifications = new RecordingNotifications();
+        using var vm = Create(new InMemorySettingsService(), new RecordingThemeApplier(), clientContext: context, notifications: notifications);
+
+        await vm.LogoutCommand.Execute();
+
+        (await notifications.Next()).Should().Be(("Sign out failed", "Coordinator unreachable"));
+    }
+
     private static SettingsViewModel Create(
         ISettingsService settings,
         IThemeApplier themeApplier,
         Uri? endpoint = null,
-        IFleetClientConnectionFlow? connectionFlow = null)
+        IFleetClientConnectionFlow? connectionFlow = null,
+        IConnectedFleetClientContext? clientContext = null,
+        INotificationService? notifications = null)
     {
         var handler = new StubHandler();
         var client = new FleetApiClient(handler, handler, new Subject<System.Reactive.Unit>());
@@ -77,11 +92,11 @@ public sealed class SettingsViewModelTests
             client,
             settings,
             Substitute.For<IBackendHealthMonitor>(),
-            Substitute.For<IConnectedFleetClientContext>(),
+            clientContext ?? Substitute.For<IConnectedFleetClientContext>(),
             connectionFlow ?? Substitute.For<IFleetClientConnectionFlow>());
         var backend = BackendStatusViewModelTests.Create(BackendStatusViewModelTests.Snapshot(BackendHealth.Healthy, endpoint));
 
-        return new SettingsViewModel(bootstrapper, backend, settings, themeApplier, Substitute.For<INotificationService>());
+        return new SettingsViewModel(bootstrapper, backend, settings, themeApplier, notifications ?? Substitute.For<INotificationService>());
     }
 
     private sealed class RecordingThemeApplier : IThemeApplier
@@ -89,6 +104,21 @@ public sealed class SettingsViewModelTests
         public List<AppTheme> Applied { get; } = [];
 
         public void Apply(AppTheme theme) => Applied.Add(theme);
+    }
+
+    private sealed class RecordingNotifications : INotificationService
+    {
+        private readonly System.Threading.Channels.Channel<(string Title, string Message)> shown =
+            System.Threading.Channels.Channel.CreateUnbounded<(string, string)>();
+
+        public Task Show(string message, Maybe<string> title)
+        {
+            shown.Writer.TryWrite((title.GetValueOrDefault(""), message));
+            return Task.CompletedTask;
+        }
+
+        public async Task<(string Title, string Message)> Next() =>
+            await shown.Reader.ReadAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(5));
     }
 
     private sealed class StubHandler : HttpMessageHandler

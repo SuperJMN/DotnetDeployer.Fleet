@@ -36,7 +36,7 @@ internal static class DestructiveConfirmation
     public static Task<bool> ConfirmDeploy(this IDialog dialog, Project project)
     {
         var commit = project.LastPolledCommitSha is { Length: > 0 } sha
-            ? $"the latest commit on {project.Branch} (last seen: {sha[..Math.Min(7, sha.Length)]})"
+            ? $"the latest commit on {project.Branch} (last seen: {JobNaming.ShortSha(sha)})"
             : $"the latest commit on {project.Branch}";
 
         return dialog.ConfirmDestructive(
@@ -46,23 +46,23 @@ internal static class DestructiveConfirmation
     }
 
     /// <summary>
-    /// Tells how many finished builds will go and that active ones stay. Returns false without
-    /// asking when there is nothing to clear.
+    /// Tells how many finished jobs (builds and deploys) will go and that active ones stay.
+    /// Returns false without asking when there is nothing to clear.
     /// </summary>
     public static async Task<bool> ConfirmClearBuilds(this IDialog dialog, IEnumerable<DeploymentJob> jobs, string scope)
     {
         var finished = jobs.Count(job => FinishedStatuses.Contains(job.Status));
         if (finished == 0)
         {
-            await dialog.ShowMessage("Nothing to clear", "There are no finished builds to clear.");
+            await dialog.ShowMessage("Nothing to clear", "There are no finished jobs to clear.");
             return false;
         }
 
-        var builds = finished == 1 ? "1 finished build" : $"{finished} finished builds";
+        var finishedJobs = finished == 1 ? "1 finished job" : $"{finished} finished jobs";
 
         return await dialog.ConfirmDestructive(
-            "Clear builds?",
-            $"This deletes {builds} {scope}, along with their logs. Builds that are queued or still running are not touched.",
-            "Clear Builds");
+            "Clear jobs?",
+            $"This deletes {finishedJobs} {scope}, along with their logs. Jobs that are queued or still running are not touched.",
+            "Clear Jobs");
     }
 }

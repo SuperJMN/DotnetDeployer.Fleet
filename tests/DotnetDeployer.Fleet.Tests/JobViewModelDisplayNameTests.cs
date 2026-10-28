@@ -18,13 +18,48 @@ public class JobViewModelDisplayNameTests
     }
 
     [Fact]
-    public void Falls_back_to_short_GUID_when_no_version_is_known_yet()
+    public void Is_named_after_its_short_commit_when_no_version_is_known_yet()
     {
-        var job = new DeploymentJob { Id = Guid.Parse("abcdef01-2345-6789-abcd-ef0123456789") };
+        var job = new DeploymentJob
+        {
+            Id = Guid.Parse("abcdef01-2345-6789-abcd-ef0123456789"),
+            TriggerCommitSha = "58f1c495e00554b14859456e8557aa98b9b177dd"
+        };
 
         var vm = BuildVm(job);
 
-        vm.DisplayName.Should().Be("abcdef01");
+        vm.DisplayName.Should().Be("Commit 58f1c49");
+        vm.ShortCommitSha.Should().Be("58f1c49");
+    }
+
+    [Fact]
+    public void Is_named_after_when_it_was_first_queued_when_neither_version_nor_commit_is_known()
+    {
+        var firstQueuedAt = new DateTimeOffset(2026, 10, 14, 10, 54, 0, TimeSpan.Zero);
+        var job = new DeploymentJob
+        {
+            Id = Guid.Parse("abcdef01-2345-6789-abcd-ef0123456789"),
+            InitialEnqueuedAt = firstQueuedAt,
+            EnqueuedAt = firstQueuedAt.AddMinutes(30)
+        };
+
+        var vm = BuildVm(job);
+
+        vm.DisplayName.Should().Be($"Queued {LocalTimestampFormatter.Format(firstQueuedAt)}");
+    }
+
+    [Fact]
+    public void DisplayName_switches_to_the_commit_once_the_coordinator_reports_it()
+    {
+        var job = new DeploymentJob { Id = Guid.NewGuid() };
+        var vm = BuildVm(job);
+        var changed = new List<string?>();
+        vm.PropertyChanged += (_, e) => changed.Add(e.PropertyName);
+
+        vm.ApplyJobUpdate(new DeploymentJob { Id = job.Id, TriggerCommitSha = "0123456789abcdef" });
+
+        vm.DisplayName.Should().Be("Commit 0123456");
+        changed.Should().Contain(nameof(JobViewModel.DisplayName));
     }
 
     [Fact]

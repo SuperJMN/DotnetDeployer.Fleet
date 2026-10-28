@@ -62,7 +62,8 @@ public partial class SecretsViewModel : ReactiveObject, IHaveHeader, IDisposable
         _disposables.Add(AddCommand.ThrownExceptions.Subscribe(ex => Error = ex.Message));
         _disposables.Add(ImportFromEnvCommand.ThrownExceptions.Subscribe(ex => Error = ex.Message));
 
-        Header = Observable.Return<object>(new SectionHeader("Global Secrets",
+        Header = Observable.Return<object>(new SectionHeader("Secrets",
+            "Shared by every project; project secrets override them",
             new HeaderAction("Refresh", "mdi-refresh", RefreshCommand)));
     }
 

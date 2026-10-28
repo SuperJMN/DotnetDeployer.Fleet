@@ -30,7 +30,7 @@ public sealed class ProjectDetailHeaderActionsTests
         var secrets = header.Actions.Should().ContainSingle(action => action.Text == "Project Secrets").Subject;
         secrets.IconCode.Should().Be("mdi-key-outline");
         secrets.Command.Should().BeSameAs(vm.OpenSecretsCommand);
-        var clear = header.Actions.Should().ContainSingle(action => action.Text == "Clear Builds").Subject;
+        var clear = header.Actions.Should().ContainSingle(action => action.Text == "Clear Jobs").Subject;
         clear.IconCode.Should().Be("mdi-delete-sweep-outline");
         clear.Command.Should().BeSameAs(vm.ClearFinishedJobsCommand);
     }
