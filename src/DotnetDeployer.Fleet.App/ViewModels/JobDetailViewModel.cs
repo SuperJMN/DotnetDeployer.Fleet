@@ -1,5 +1,6 @@
 using System.Collections.ObjectModel;
 using System.Reactive;
+using System.Reactive.Concurrency;
 using System.Reactive.Disposables;
 using System.Reactive.Disposables.Fluent;
 using System.Reactive.Linq;
@@ -37,6 +38,7 @@ public partial class JobDetailViewModel : ReactiveObject, IHaveHeader, IDisposab
     private readonly JobPhaseTree _phaseTree = new(FormatPhaseName);
     private readonly IDisposable _filterSubscription;
     private readonly BehaviorSubject<object> _header;
+    private IDisposable _terminalFeed = Disposable.Empty;
     private bool isDisposed;
 
     public DeploymentJob Job { get; private set; }
@@ -226,7 +228,32 @@ public partial class JobDetailViewModel : ReactiveObject, IHaveHeader, IDisposab
     public ReactiveCommand<Unit, Unit> ToggleDetailedLogCommand { get; }
     public ReactiveCommand<Unit, Unit> CancelJobCommand { get; }
 
-    public void SetTerminalModel(TerminalControlModel model) => TerminalModel = model;
+    /// <summary>
+    /// Shows the visible log lines in <paramref name="model"/>. The terminal is
+    /// written only from <see cref="FilteredLogs"/>, so every line appears once
+    /// and the severity filter is respected while the job streams.
+    /// </summary>
+    public void SetTerminalModel(TerminalControlModel model)
+    {
+        ShowLogsIn(model.Feed);
+        TerminalModel = model;
+    }
+
+    /// <summary>
+    /// Writes the visible log lines, and every later change to them, to a terminal.
+    /// </summary>
+    internal void ShowLogsIn(Action<string> writeToTerminal)
+    {
+        DetachTerminalModel();
+        _terminalFeed = new LogTerminalFeed(FilteredLogs, writeToTerminal);
+    }
+
+    public void DetachTerminalModel()
+    {
+        _terminalFeed.Dispose();
+        _terminalFeed = Disposable.Empty;
+        TerminalModel = null;
+    }
 
     private void OnSearchTextChanged(string? text)
     {
@@ -335,21 +362,13 @@ public partial class JobDetailViewModel : ReactiveObject, IHaveHeader, IDisposab
             buffer.Clear();
             lastFlush = Environment.TickCount64;
 
-            Avalonia.Threading.Dispatcher.UIThread.Post(() =>
-            {
-                _logs.AddRange(batch);
-                FeedBatchToTerminal(batch);
-            });
+            RxSchedulers.MainThreadScheduler.Schedule(() => _logs.AddRange(batch));
         }
 
         if (buffer.Count > 0)
         {
             var remaining = buffer.ToList();
-            Avalonia.Threading.Dispatcher.UIThread.Post(() =>
-            {
-                _logs.AddRange(remaining);
-                FeedBatchToTerminal(remaining);
-            });
+            RxSchedulers.MainThreadScheduler.Schedule(() => _logs.AddRange(remaining));
         }
 
         var updated = await _client.GetJobAsync(Job.Id);
@@ -524,19 +543,13 @@ public partial class JobDetailViewModel : ReactiveObject, IHaveHeader, IDisposab
         job.Status is JobStatus.Running or JobStatus.Queued or JobStatus.Assigned or JobStatus.AwaitingNuGetIndex
         && job.CancellationRequestedAt is null;
 
-    private void FeedBatchToTerminal(List<LogLine> batch)
-    {
-        if (TerminalModel is null) return;
-        foreach (var line in batch)
-            TerminalModel.Feed(LogAnsi.Format(line) + "\r\n");
-    }
-
     public void Dispose()
     {
         isDisposed = true;
         _cts?.Cancel();
         _cts?.Dispose();
         disposables.Dispose();
+        _terminalFeed.Dispose();
         _filterSubscription.Dispose();
         _phaseTree.Dispose();
         _logs.Dispose();
