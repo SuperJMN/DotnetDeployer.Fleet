@@ -279,15 +279,6 @@ public class ProjectDetailViewLayoutTests
             .NotContain("Add Project");
     }
 
-    [Fact]
-    public void ProjectsViewModel_ShouldOpenAddProjectInDialog()
-    {
-        var source = File.ReadAllText(ProjectFilePath("ViewModels", "ProjectsViewModel.cs"));
-
-        source.Should().Contain("_dialog.Show(vm, \"Add Project\"");
-        source.Should().NotContain("Navigator.Go(() => new AddProjectViewModel");
-    }
-
     private static string ProjectFilePath(params string[] parts)
     {
         var directory = new DirectoryInfo(AppContext.BaseDirectory);

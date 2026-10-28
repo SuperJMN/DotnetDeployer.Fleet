@@ -63,10 +63,7 @@ public partial class ProjectDetailViewModel : ReactiveObject, IHaveHeader, IDisp
         DeployCommand = ReactiveCommand.CreateFromTask(Deploy);
         BuildPackagesCommand = ReactiveCommand.CreateFromTask(ShowBuildPackagesDialog);
         ClearFinishedJobsCommand = ReactiveCommand.CreateFromTask(ClearFinishedJobs);
-        EditCommand = ReactiveCommand.Create(() =>
-        {
-            _navigator.Go(() => new EditProjectViewModel(Project, _client, _navigator, projectsForRefresh: null));
-        });
+        EditCommand = ReactiveCommand.CreateFromTask(EditProject);
         OpenSecretsCommand = ReactiveCommand.Create(() =>
         {
             _navigator.Go(() => new ProjectSecretsViewModel(Project.Id, Project.Name, _client, clientContext, _dialog, notificationService));
@@ -174,6 +171,12 @@ public partial class ProjectDetailViewModel : ReactiveObject, IHaveHeader, IDisp
             Jobs.Insert(0, new JobViewModel(job, client, _navigator, this, _fileSystemPicker, clientContext: clientContext, notificationService: notificationService));
             RaiseJobHistoryStateChanged();
         });
+    }
+
+    private async Task EditProject()
+    {
+        if (await _dialog.ShowProjectForm(new EditProjectViewModel(Project, _client), "Edit Project"))
+            RefreshCommand.Execute(Unit.Default).Subscribe();
     }
 
     private async Task<Maybe<Result>> ShowBuildPackagesDialog()

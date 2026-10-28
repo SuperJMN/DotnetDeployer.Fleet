@@ -6,13 +6,10 @@
              x:DataType="vm:EditProjectViewModel">
 
     <ScrollViewer HorizontalScrollBarVisibility="Disabled"
-                  VerticalScrollBarVisibility="Auto"
-                  Margin="16">
+                  VerticalScrollBarVisibility="Auto">
         <StackPanel Spacing="16"
                     MaxWidth="480"
-                    HorizontalAlignment="Center">
-
-            <TextBlock Text="Edit Project" FontSize="22" FontWeight="Bold" />
+                    HorizontalAlignment="Stretch">
 
             <StackPanel Spacing="4">
                 <TextBlock Text="Name" Opacity="0.7" FontSize="12" TextWrapping="Wrap" />
@@ -70,17 +67,6 @@
                        Foreground="Red"
                        IsVisible="{Binding Error, Converter={x:Static ObjectConverters.IsNotNull}}"
                        TextWrapping="Wrap" />
-
-            <FlexPanel Wrap="Wrap" Gap="8" JustifyContent="End">
-                <EnhancedButton Content="Cancel" Icon="{Icon mdi-close}"
-                                Classes="Cancel"
-                                Command="{Binding CancelCommand}" IsEnabled="{Binding !IsBusy}"
-                                FlexPanel.Shrink="0" />
-                <EnhancedButton Content="Save" Icon="{Icon mdi-content-save}"
-                                Classes="Primary"
-                                Command="{Binding SaveCommand}" IsEnabled="{Binding !IsBusy}"
-                                FlexPanel.Shrink="0" />
-            </FlexPanel>
 
         </StackPanel>
     </ScrollViewer>

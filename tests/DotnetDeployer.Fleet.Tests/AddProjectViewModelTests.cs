@@ -76,6 +76,24 @@ public class AddProjectViewModelTests
         vm.Error.Should().Be("Name, Git URL and Branch are required.");
     }
 
+    [Fact]
+    public void A_new_form_has_no_changes()
+    {
+        var vm = CreateViewModel();
+
+        vm.HasChanges.Should().BeFalse();
+    }
+
+    [Fact]
+    public void Typing_in_the_form_leaves_unsaved_changes()
+    {
+        var vm = CreateViewModel();
+
+        vm.Name = "App";
+
+        vm.HasChanges.Should().BeTrue();
+    }
+
     private static Task<bool> CurrentCanSave(AddProjectViewModel vm) =>
         vm.CanSave.FirstAsync().ToTask();
 

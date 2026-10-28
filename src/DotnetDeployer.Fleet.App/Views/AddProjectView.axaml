@@ -6,8 +6,7 @@
              x:DataType="vm:AddProjectViewModel">
 
     <ScrollViewer HorizontalScrollBarVisibility="Disabled"
-                  VerticalScrollBarVisibility="Auto"
-                  MaxHeight="360">
+                  VerticalScrollBarVisibility="Auto">
         <StackPanel Spacing="16"
                     MaxWidth="480"
                     HorizontalAlignment="Stretch">
