@@ -4,7 +4,6 @@ using System.Reactive.Concurrency;
 using System.Reactive.Disposables;
 using System.Reactive.Linq;
 using System.Reactive.Subjects;
-using Avalonia.Media;
 using CSharpFunctionalExtensions;
 using DotnetDeployer.Fleet.Api.Client;
 using DotnetDeployer.Fleet.Core.Domain;
@@ -664,7 +663,7 @@ public partial class JobViewModel : ReactiveObject
         this.RaisePropertyChanged(nameof(HasProjectName));
         this.RaisePropertyChanged(nameof(StatusText));
         this.RaisePropertyChanged(nameof(StatusIcon));
-        this.RaisePropertyChanged(nameof(StatusBrush));
+        this.RaisePropertyChanged(nameof(StatusTone));
         this.RaisePropertyChanged(nameof(KindText));
         this.RaisePropertyChanged(nameof(TimestampLabel));
         this.RaisePropertyChanged(nameof(TimestampText));
@@ -696,31 +695,12 @@ public partial class JobViewModel : ReactiveObject
 
     public string KindText => Job.Kind == JobKind.PackageBuild ? "Packages" : "Deploy";
 
-    public IIcon StatusIcon => new Icon(Job.Status switch
-    {
-        JobStatus.Queued => "mdi-clock-outline",
-        JobStatus.Assigned => "mdi-account-arrow-right-outline",
-        JobStatus.Running => "mdi-rocket-launch",
-        JobStatus.Succeeded => Job.NuGetVerification == NuGetVerificationStatus.Verified
+    public IIcon StatusIcon => new Icon(
+        Job.Status == JobStatus.Succeeded && Job.NuGetVerification == NuGetVerificationStatus.Verified
             ? "mdi-check-decagram"
-            : "mdi-check-circle",
-        JobStatus.Failed => "mdi-alert-circle",
-        JobStatus.Cancelled => "mdi-cancel",
-        JobStatus.AwaitingNuGetIndex => "mdi-clock-outline",
-        _ => "mdi-help-circle-outline"
-    });
+            : JobStatusDisplay.IconCode(Job.Status));
 
-    public IBrush StatusBrush => Job.Status switch
-    {
-        JobStatus.Queued => new SolidColorBrush(Color.Parse("#9E9E9E")),
-        JobStatus.Assigned => new SolidColorBrush(Color.Parse("#42A5F5")),
-        JobStatus.Running => new SolidColorBrush(Color.Parse("#29B6F6")),
-        JobStatus.Succeeded => new SolidColorBrush(Color.Parse("#43A047")),
-        JobStatus.Failed => new SolidColorBrush(Color.Parse("#E53935")),
-        JobStatus.Cancelled => new SolidColorBrush(Color.Parse("#FB8C00")),
-        JobStatus.AwaitingNuGetIndex => new SolidColorBrush(Color.Parse("#29B6F6")),
-        _ => Brushes.Gray
-    };
+    public Tone StatusTone => JobStatusDisplay.Tone(Job.Status);
 
     public ReactiveCommand<System.Reactive.Unit, System.Reactive.Unit> OpenCommand { get; }
 

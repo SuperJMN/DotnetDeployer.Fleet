@@ -47,6 +47,8 @@ public partial class JobDetailViewModel : ReactiveObject, IHaveHeader, IDisposab
     public DeploymentJob Job { get; private set; }
 
     [Reactive] private string _statusText = string.Empty;
+    [Reactive] private IIcon _statusIcon = new Icon();
+    [Reactive] private Tone _statusTone;
     [Reactive] private bool _isStreaming;
     [Reactive] private bool _canCancel;
     [Reactive] private string? _errorMessage;
@@ -111,7 +113,7 @@ public partial class JobDetailViewModel : ReactiveObject, IHaveHeader, IDisposab
         _fileSystemPicker = fileSystemPicker;
         _clipboard = clipboard ?? new AvaloniaTextClipboard();
         _parentProject = parentProject;
-        _statusText = FormatStatus(job.Status);
+        ShowStatus(job.Status);
         _errorMessage = job.ErrorMessage;
         _canCancel = IsJobCancelable(job);
 
@@ -434,7 +436,7 @@ public partial class JobDetailViewModel : ReactiveObject, IHaveHeader, IDisposab
         {
             await _client.CancelJobAsync(Job.Id);
             CanCancel = false;
-            StatusText = JobStatus.Cancelled.ToString();
+            ShowStatus(JobStatus.Cancelled);
             PublishHeader();
         }
         catch (Exception ex)
@@ -490,7 +492,7 @@ public partial class JobDetailViewModel : ReactiveObject, IHaveHeader, IDisposab
                 if (Enum.TryParse<JobStatus>(evt.Data, out var status))
                     Avalonia.Threading.Dispatcher.UIThread.Post(() =>
                     {
-                        StatusText = FormatStatus(status);
+                        ShowStatus(status);
                         PublishHeader();
                     });
                 continue;
@@ -539,7 +541,7 @@ public partial class JobDetailViewModel : ReactiveObject, IHaveHeader, IDisposab
         if (updated.Id != Job.Id) return;
 
         Job = updated;
-        StatusText = FormatStatus(updated.Status);
+        ShowStatus(updated.Status);
         ErrorMessage = updated.ErrorMessage;
         CurrentPhase = updated.CurrentPhase;
         CurrentPhaseStartedAt = updated.CurrentPhaseStartedAt;
@@ -652,15 +654,22 @@ public partial class JobDetailViewModel : ReactiveObject, IHaveHeader, IDisposab
             : new FileTypeFilter($"{extension.TrimStart('.').ToUpperInvariant()} files (*{extension})", [$"*{extension}"]);
     }
 
+    private void ShowStatus(JobStatus status)
+    {
+        StatusText = FormatStatus(status);
+        StatusIcon = new Icon(JobStatusDisplay.IconCode(status));
+        StatusTone = JobStatusDisplay.Tone(status);
+    }
+
     private static string FormatStatus(JobStatus status) => status switch
     {
-        JobStatus.Queued => "⏳ Queued — Waiting for worker",
-        JobStatus.Assigned => "🔄 Assigned",
-        JobStatus.Running => "🚀 Running",
-        JobStatus.Succeeded => "✅ Succeeded",
-        JobStatus.Failed => "❌ Failed",
-        JobStatus.Cancelled => "🚫 Cancelled",
-        JobStatus.AwaitingNuGetIndex => "⏳ Waiting for NuGet indexing",
+        JobStatus.Queued => "Queued — Waiting for worker",
+        JobStatus.Assigned => "Assigned",
+        JobStatus.Running => "Running",
+        JobStatus.Succeeded => "Succeeded",
+        JobStatus.Failed => "Failed",
+        JobStatus.Cancelled => "Cancelled",
+        JobStatus.AwaitingNuGetIndex => "Waiting for NuGet indexing",
         _ => status.ToString()
     };
 

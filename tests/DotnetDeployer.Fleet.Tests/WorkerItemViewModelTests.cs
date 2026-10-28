@@ -82,6 +82,28 @@ public class WorkerItemViewModelTests
     }
 
     [Fact]
+    public void Status_is_a_plain_label_with_a_tone()
+    {
+        var vm = new WorkerItemViewModel(Info(4, 0, null), client: null!, parent: null!, notificationService: null!);
+
+        vm.StatusLabel.Should().Be("Online");
+        vm.StatusIcon.Source.Should().StartWith("mdi-");
+        vm.StatusTone.Should().Be(Tone.Success);
+    }
+
+    [Fact]
+    public void Status_follows_worker_updates()
+    {
+        var worker = Info(4, 0, null);
+        var vm = new WorkerItemViewModel(worker, client: null!, parent: null!, notificationService: null!);
+
+        vm.ApplyWorkerUpdate(worker with { Status = WorkerStatus.Offline });
+
+        vm.StatusLabel.Should().Be("Offline");
+        vm.StatusTone.Should().Be(Tone.Danger);
+    }
+
+    [Fact]
     public void DisplayVersion_updates_when_worker_version_changes()
     {
         var workerId = Guid.NewGuid();

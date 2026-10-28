@@ -13,6 +13,8 @@ public interface ISettingsService
     LoginCredentials? GetCredentials();
     void SetCredentials(string username, string password);
     void ClearCredentials();
+    AppTheme GetTheme();
+    void SetTheme(AppTheme theme);
 }
 
 public sealed record LoginCredentials(string Username, string Password);
@@ -22,6 +24,7 @@ public class InMemorySettingsService : ISettingsService
     private string? _endpoint;
     private string? _token;
     private LoginCredentials? credentials;
+    private AppTheme theme;
 
     public string? GetEndpoint() => _endpoint;
     public void SetEndpoint(string? endpoint) => _endpoint = endpoint;
@@ -31,6 +34,8 @@ public class InMemorySettingsService : ISettingsService
     public LoginCredentials? GetCredentials() => credentials;
     public void SetCredentials(string username, string password) => credentials = new LoginCredentials(username, password);
     public void ClearCredentials() => credentials = null;
+    public AppTheme GetTheme() => theme;
+    public void SetTheme(AppTheme value) => theme = value;
 }
 
 public class FileSettingsService : ISettingsService
@@ -70,6 +75,11 @@ public class FileSettingsService : ISettingsService
         _data.Remove("password");
         Save();
     }
+
+    public AppTheme GetTheme() =>
+        Enum.TryParse<AppTheme>(_data.GetValueOrDefault("theme"), out var theme) ? theme : AppTheme.System;
+
+    public void SetTheme(AppTheme value) { _data["theme"] = value.ToString(); Save(); }
 
     private void Load()
     {
