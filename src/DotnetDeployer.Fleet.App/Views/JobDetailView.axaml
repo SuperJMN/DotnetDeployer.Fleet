@@ -175,7 +175,8 @@
                                    Text="{Binding SearchResultText}" />
                         <EnhancedButton Icon="{Icon mdi-chevron-down}" Padding="6,4"
                                         Command="{Binding NextSearchResultCommand}"
-                                        ToolTip.Tip="Next match" />
+                                        ToolTip.Tip="Next match"
+                                        AutomationProperties.Name="Next match" />
                         <ComboBox ItemsSource="{Binding SeverityFilters}"
                                   SelectedValueBinding="{Binding Minimum, DataType=vm:SeverityFilterOption}"
                                   DisplayMemberBinding="{Binding Label, DataType=vm:SeverityFilterOption}"

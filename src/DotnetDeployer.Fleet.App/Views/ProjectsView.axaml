@@ -82,6 +82,7 @@
                                             BorderBrush="{DynamicResource SystemControlForegroundBaseLowBrush}"
                                             BorderThickness="1"
                                             ToolTip.Tip="Change icon"
+                                            AutomationProperties.Name="Change icon"
                                             Command="{Binding ChangeIconCommand}">
                                 <Grid>
                                     <Image Source="{Binding ProjectIconBytes, Converter={x:Static converters:ProjectIconConverters.ByteArrayToBitmap}}"
@@ -104,16 +105,16 @@
                                        HorizontalAlignment="Right"
                                        VerticalAlignment="Bottom"
                                        Margin="12">
-                                <EnhancedButton ToolTip.Tip="Edit" Command="{Binding EditCommand}">
+                                <EnhancedButton ToolTip.Tip="Edit" AutomationProperties.Name="Edit" Command="{Binding EditCommand}">
                                     <icons:Icon Value="mdi-pencil" />
                                 </EnhancedButton>
                                 <!-- Rare and destructive actions stay out of the way, behind a menu. -->
-                                <EnhancedButton ToolTip.Tip="More actions">
+                                <EnhancedButton ToolTip.Tip="More actions" AutomationProperties.Name="More actions">
                                     <EnhancedButton.Flyout>
                                         <MenuFlyout Placement="BottomEdgeAlignedRight">
                                             <MenuItem Header="Use automatic icon" Command="{Binding ResetIconCommand}">
                                                 <MenuItem.Icon>
-                                                    <icons:Icon Value="mdi-refresh" />
+                                                    <icons:Icon Value="mdi-auto-fix" />
                                                 </MenuItem.Icon>
                                             </MenuItem>
                                             <Separator />

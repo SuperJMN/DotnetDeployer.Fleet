@@ -89,7 +89,7 @@ public partial class ProjectDetailViewModel : ReactiveObject, IHaveHeader, IDisp
             // Deploying publishes and cannot be undone, so it gets the irreversible style instead of
             // looking like Queue Build, which only produces packages.
             new HeaderAction("Queue Deploy", "mdi-rocket-launch", DeployCommand, isDestructive: true),
-            new HeaderAction("Clear Builds", "mdi-broom", ClearFinishedJobsCommand),
+            new HeaderAction("Clear Builds", "mdi-delete-sweep-outline", ClearFinishedJobsCommand),
             new HeaderAction("Refresh", "mdi-refresh", RefreshCommand),
             new HeaderAction("Project Secrets", "mdi-key-outline", OpenSecretsCommand),
             new HeaderAction("Edit", "mdi-pencil", EditCommand));

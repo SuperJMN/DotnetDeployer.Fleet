@@ -208,7 +208,7 @@ public sealed class BuildsViewModelTests
         var header = (SectionHeader)await vm.Header.FirstAsync();
 
         var action = header.Actions.Should().ContainSingle(action => action.Text == "Clear Builds").Subject;
-        action.IconCode.Should().Be("mdi-broom");
+        action.IconCode.Should().Be("mdi-delete-sweep-outline");
         action.Command.Should().BeSameAs(vm.ClearFinishedJobsCommand);
     }
 

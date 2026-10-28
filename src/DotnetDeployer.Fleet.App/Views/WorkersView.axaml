@@ -111,7 +111,7 @@
                             </FlexPanel>
 
                             <!-- Removing a worker is rare and destructive: keep it behind a menu. -->
-                            <EnhancedButton Grid.Column="1" VerticalAlignment="Top" ToolTip.Tip="More actions">
+                            <EnhancedButton Grid.Column="1" VerticalAlignment="Top" ToolTip.Tip="More actions" AutomationProperties.Name="More actions">
                                 <EnhancedButton.Flyout>
                                     <MenuFlyout Placement="BottomEdgeAlignedRight">
                                         <MenuItem Header="Remove worker…" Command="{Binding RemoveCommand}">

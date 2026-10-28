@@ -65,9 +65,10 @@
                                         <icons:Icon Value="{Binding IconCode}" />
                                     </zac:EnhancedButton.Icon>
                                 </zac:EnhancedButton>
-                                <!-- Secondary: icon-only with tooltip (icon as Content to bypass Zafiro 51.9.0 IconPresenter bug) -->
+                                <!-- Secondary: icon-only with tooltip and accessible name (icon as Content to bypass Zafiro 51.9.0 IconPresenter bug) -->
                                 <zac:EnhancedButton Command="{Binding Command}"
                                                     ToolTip.Tip="{Binding Text}"
+                                                    AutomationProperties.Name="{Binding Text}"
                                                     IsVisible="{Binding IsSecondaryCommand}">
                                     <icons:Icon Value="{Binding IconCode}" />
                                 </zac:EnhancedButton>

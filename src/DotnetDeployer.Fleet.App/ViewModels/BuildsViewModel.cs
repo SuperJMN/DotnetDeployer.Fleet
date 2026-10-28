@@ -58,7 +58,7 @@ public partial class BuildsViewModel : ReactiveObject, IHaveHeader, IDisposable
 
         Header = Observable.Return<object>(new SectionHeader("Builds",
             "All projects, newest first",
-            new HeaderAction("Clear Builds", "mdi-broom", ClearFinishedJobsCommand),
+            new HeaderAction("Clear Builds", "mdi-delete-sweep-outline", ClearFinishedJobsCommand),
             new HeaderAction("Refresh", "mdi-refresh", RefreshCommand)));
     }
 
