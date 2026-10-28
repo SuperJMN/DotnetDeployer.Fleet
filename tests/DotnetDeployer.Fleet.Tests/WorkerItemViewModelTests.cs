@@ -1,11 +1,22 @@
+using System.Net;
+using System.Reactive.Linq;
 using DotnetDeployer.Fleet.Api.Client;
 using DotnetDeployer.Fleet.Core.Domain;
 using DotnetDeployer.Fleet.App.ViewModels;
+using ReactiveUI.Builder;
+using Zafiro.UI;
 
 namespace DotnetDeployer.Fleet.Tests;
 
 public class WorkerItemViewModelTests
 {
+    static WorkerItemViewModelTests()
+    {
+        RxAppBuilder.CreateReactiveUIBuilder()
+            .WithCoreServices()
+            .BuildApp();
+    }
+
     private static FleetApiClient.WorkerInfo Info(int cpu, long mem, string? arch)
         => new(
             Id: Guid.NewGuid(),
@@ -88,5 +99,49 @@ public class WorkerItemViewModelTests
 
         vm.DisplayVersion.Should().Be("v0.1.10-1");
         seen.Should().Contain("v0.1.10-1");
+    }
+
+    [Fact]
+    public async Task Save_is_not_offered_while_the_disk_limit_is_unchanged()
+    {
+        var vm = new WorkerItemViewModel(Info(4, 0, null), client: null!, parent: null!, notificationService: Substitute.For<INotificationService>());
+
+        (await vm.SaveConfigCommand.CanExecute.FirstAsync()).Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task Save_is_offered_once_the_disk_limit_changes()
+    {
+        var vm = new WorkerItemViewModel(Info(4, 0, null), client: null!, parent: null!, notificationService: Substitute.For<INotificationService>());
+
+        vm.MaxDiskUsageGb = 25;
+
+        (await vm.SaveConfigCommand.CanExecute.FirstAsync()).Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task Save_is_no_longer_offered_after_the_new_limit_is_stored()
+    {
+        var vm = new WorkerItemViewModel(Info(4, 0, null), CreateClient(), parent: null!, notificationService: Substitute.For<INotificationService>());
+        vm.MaxDiskUsageGb = 25;
+
+        await vm.SaveConfigCommand.Execute();
+
+        vm.Worker.MaxDiskUsageGb.Should().Be(25);
+        (await vm.SaveConfigCommand.CanExecute.FirstAsync()).Should().BeFalse();
+    }
+
+    private static FleetApiClient CreateClient()
+    {
+        var handler = new StubHandler(_ => new HttpResponseMessage(HttpStatusCode.NoContent));
+        var client = new FleetApiClient(handler, handler);
+        client.SetBaseAddress("http://localhost:5000");
+        return client;
+    }
+
+    private sealed class StubHandler(Func<HttpRequestMessage, HttpResponseMessage> handle) : HttpMessageHandler
+    {
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken) =>
+            Task.FromResult(handle(request));
     }
 }
