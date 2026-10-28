@@ -6,8 +6,8 @@ using Zafiro.Avalonia.Dialogs.Views;
 namespace DotnetDeployer.Fleet.Tests;
 
 /// <summary>
-/// Dialog double that answers like a user would: it presses the destructive option when
-/// <paramref name="confirm"/> is true and the cancel option otherwise. Dialogs without those
+/// Dialog double that answers like a user would: it presses the destructive (or, failing that,
+/// primary) option when <paramref name="confirm"/> is true and the cancel option otherwise. Dialogs without those
 /// options (plain messages) get their first option pressed.
 /// </summary>
 internal sealed class ScriptedDialog(bool confirm) : IDialog
@@ -30,8 +30,11 @@ internal sealed class ScriptedDialog(bool confirm) : IDialog
 
         var closeable = new RecordingCloseable();
         var options = optionsFactory(viewModel, closeable).ToList();
-        var role = confirm ? OptionRole.Destructive : OptionRole.Cancel;
-        var choice = options.FirstOrDefault(option => option.Role == role) ?? options.First();
+        var choice = confirm
+            ? options.FirstOrDefault(option => option.Role == OptionRole.Destructive)
+              ?? options.FirstOrDefault(option => option.Role == OptionRole.Primary)
+            : options.FirstOrDefault(option => option.Role == OptionRole.Cancel);
+        choice ??= options.First();
         choice.Command.Execute(null);
 
         return closeable.IsClosed;
