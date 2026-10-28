@@ -43,6 +43,24 @@ public sealed class JobDetailViewModelHeaderTests
     }
 
     [Fact]
+    public async Task Header_shows_the_queued_time_like_the_job_lists()
+    {
+        var enqueuedAt = new DateTimeOffset(2026, 10, 14, 10, 54, 0, TimeSpan.Zero);
+        var job = new DeploymentJob
+        {
+            Id = Guid.NewGuid(),
+            Status = JobStatus.Succeeded,
+            EnqueuedAt = enqueuedAt,
+            FinishedAt = enqueuedAt.AddMinutes(2)
+        };
+        using var vm = CreateViewModel(job);
+
+        var header = (SectionHeader)await vm.Header.FirstAsync();
+
+        header.Subtitle.Should().Contain($"Queued: {LocalTimestampFormatter.Format(enqueuedAt)}");
+    }
+
+    [Fact]
     public void DestructiveHeaderAction_ShouldNotBeRenderedAsPrimaryOrSecondary()
     {
         var command = Substitute.For<System.Windows.Input.ICommand>();
