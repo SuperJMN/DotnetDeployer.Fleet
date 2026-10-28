@@ -4,6 +4,7 @@ using DotnetDeployer.Fleet.Api.Client;
 using DotnetDeployer.Fleet.Core.Domain;
 using DotnetDeployer.Fleet.App.ViewModels;
 using ReactiveUI.Builder;
+using Zafiro.UI;
 
 namespace DotnetDeployer.Fleet.Tests;
 
@@ -103,7 +104,7 @@ public class WorkerItemViewModelTests
     [Fact]
     public async Task Save_is_not_offered_while_the_disk_limit_is_unchanged()
     {
-        var vm = new WorkerItemViewModel(Info(4, 0, null), client: null!, parent: null!);
+        var vm = new WorkerItemViewModel(Info(4, 0, null), client: null!, parent: null!, notificationService: Substitute.For<INotificationService>());
 
         (await vm.SaveConfigCommand.CanExecute.FirstAsync()).Should().BeFalse();
     }
@@ -111,7 +112,7 @@ public class WorkerItemViewModelTests
     [Fact]
     public async Task Save_is_offered_once_the_disk_limit_changes()
     {
-        var vm = new WorkerItemViewModel(Info(4, 0, null), client: null!, parent: null!);
+        var vm = new WorkerItemViewModel(Info(4, 0, null), client: null!, parent: null!, notificationService: Substitute.For<INotificationService>());
 
         vm.MaxDiskUsageGb = 25;
 
@@ -121,7 +122,7 @@ public class WorkerItemViewModelTests
     [Fact]
     public async Task Save_is_no_longer_offered_after_the_new_limit_is_stored()
     {
-        var vm = new WorkerItemViewModel(Info(4, 0, null), CreateClient(), parent: null!);
+        var vm = new WorkerItemViewModel(Info(4, 0, null), CreateClient(), parent: null!, notificationService: Substitute.For<INotificationService>());
         vm.MaxDiskUsageGb = 25;
 
         await vm.SaveConfigCommand.Execute();
