@@ -198,6 +198,7 @@
 
                 <!-- Terminal log viewer (LAST child = fills remaining space) -->
                 <terminal:TerminalControl Name="LogTerminal"
+                                          Model="{Binding TerminalModel}"
                                           FontFamily="Consolas,Courier New,monospace"
                                           FontSize="12" />
             </DockPanel>
