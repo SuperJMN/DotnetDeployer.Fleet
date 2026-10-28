@@ -24,6 +24,7 @@ public partial class ProjectsViewModel : ReactiveObject, IHaveHeader, IDisposabl
     private readonly IFileSystemPicker _fileSystemPicker;
     private readonly IDialog _dialog;
     private readonly INotificationService notificationService;
+    private readonly IPackageTargetSelectionStore packageTargetSelections;
     private readonly CompositeDisposable _disposables = [];
     internal readonly INavigator Navigator;
 
@@ -37,9 +38,11 @@ public partial class ProjectsViewModel : ReactiveObject, IHaveHeader, IDisposabl
         INavigator navigator,
         IFileSystemPicker fileSystemPicker,
         IDialog dialog,
-        INotificationService notificationService)
+        INotificationService notificationService,
+        IPackageTargetSelectionStore packageTargetSelections)
     {
         this.clientContext = clientContext;
+        this.packageTargetSelections = packageTargetSelections;
         _fileSystemPicker = fileSystemPicker;
         _dialog = dialog;
         this.notificationService = notificationService;
@@ -60,6 +63,7 @@ public partial class ProjectsViewModel : ReactiveObject, IHaveHeader, IDisposabl
 
     internal IConnectedFleetClientContext ClientContext => clientContext;
     internal INotificationService NotificationService => notificationService;
+    internal IPackageTargetSelectionStore PackageTargetSelections => packageTargetSelections;
     public IEnhancedCommand<Maybe<Result>> RefreshCommand { get; }
     public IEnhancedCommand<Maybe<Result>> AddProjectCommand { get; }
     public IObservable<object> Header { get; }
@@ -265,7 +269,8 @@ public partial class ProjectViewModel : ReactiveObject
             _navigator,
             _fileSystemPicker,
             _dialog,
-            _parent.NotificationService));
+            _parent.NotificationService,
+            _parent.PackageTargetSelections));
     }
 
     private void Edit()

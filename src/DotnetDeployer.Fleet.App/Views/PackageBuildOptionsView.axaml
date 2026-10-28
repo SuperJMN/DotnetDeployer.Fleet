@@ -43,23 +43,27 @@
                         <DataTemplate DataType="vm:PackagePlatformViewModel">
                             <StackPanel Spacing="4"
                                         Margin="0,2,0,8">
-                                <TextBlock Text="{Binding Name}"
-                                           FontWeight="SemiBold"
-                                           FontSize="12"
-                                           Opacity="0.75" />
+                                <CheckBox IsChecked="{Binding AreAllSelected}"
+                                          ToolTip.Tip="Select all">
+                                    <TextBlock Text="{Binding Name}"
+                                               FontWeight="SemiBold"
+                                               FontSize="12"
+                                               Opacity="0.75" />
+                                </CheckBox>
                                 <ItemsControl ItemsSource="{Binding Formats}">
                                     <ItemsControl.ItemTemplate>
                                         <DataTemplate DataType="vm:PackageFormatViewModel">
                                             <StackPanel Spacing="2"
                                                         Margin="0,2,0,4">
                                                 <TextBlock Text="{Binding Label}"
-                                                           FontSize="12" />
+                                                           FontSize="12"
+                                                           IsVisible="{Binding HasArchitectureChoice}" />
                                                 <ItemsControl ItemsSource="{Binding Architectures}">
                                                     <ItemsControl.ItemTemplate>
                                                         <DataTemplate DataType="vm:PackageTargetOptionViewModel">
                                                             <CheckBox IsChecked="{Binding IsSelected}"
                                                                       Margin="8,1,0,1">
-                                                                <TextBlock Text="{Binding ArchitectureLabel}"
+                                                                <TextBlock Text="{Binding Label}"
                                                                            Opacity="0.65" />
                                                             </CheckBox>
                                                         </DataTemplate>

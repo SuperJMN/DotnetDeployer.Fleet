@@ -47,6 +47,7 @@ public partial class ProjectDetailViewModel : ReactiveObject, IHaveHeader, IDisp
         IFileSystemPicker fileSystemPicker,
         IDialog dialog,
         INotificationService notificationService,
+        IPackageTargetSelectionStore packageTargetSelections,
         IScheduler? autoRefreshScheduler = null)
     {
         Project = project;
@@ -56,7 +57,7 @@ public partial class ProjectDetailViewModel : ReactiveObject, IHaveHeader, IDisp
         _fileSystemPicker = fileSystemPicker;
         _dialog = dialog;
         this.notificationService = notificationService;
-        BuildOptions = new PackageBuildOptionsViewModel(project.Id, clientContext);
+        BuildOptions = new PackageBuildOptionsViewModel(project.Id, clientContext, packageTargetSelections);
 
         RefreshCommand = ReactiveCommand.CreateFromTask(LoadJobs);
         DeployCommand = ReactiveCommand.CreateFromTask(Deploy);
@@ -187,6 +188,8 @@ public partial class ProjectDetailViewModel : ReactiveObject, IHaveHeader, IDisp
             if (request is null) return;
 
             result = await QueuePackageBuild(request);
+            if (result.HasValue && result.Value.IsSuccess)
+                BuildOptions.RememberSelection();
             if (result.HasNoValue || result.Value.IsSuccess)
                 closeDialog?.Close();
         });
@@ -259,18 +262,25 @@ public partial class PackageBuildOptionsViewModel : ReactiveObject
 {
     private readonly Guid _projectId;
     private readonly IConnectedFleetClientContext clientContext;
+    private readonly IPackageTargetSelectionStore selections;
 
     [Reactive] private bool _isLoading;
     [Reactive] private string? _error;
     [Reactive] private string _packageProject = "";
 
-    public PackageBuildOptionsViewModel(Guid projectId, IConnectedFleetClientContext clientContext)
+    public PackageBuildOptionsViewModel(
+        Guid projectId,
+        IConnectedFleetClientContext clientContext,
+        IPackageTargetSelectionStore selections)
     {
         _projectId = projectId;
         this.clientContext = clientContext;
+        this.selections = selections;
 
         foreach (var platform in PackagePlatformViewModel.CreateDefaults())
             PackagePlatforms.Add(platform);
+
+        selections.Get(projectId).Execute(RestoreSelection);
 
         foreach (var target in PackagePlatforms.SelectMany(platform => platform.Targets))
         {
@@ -317,6 +327,27 @@ public partial class PackageBuildOptionsViewModel : ReactiveObject
         }
     }
 
+    /// <summary>
+    /// Stores the currently selected targets so the dialog opens with them next time.
+    /// </summary>
+    public void RememberSelection() => selections.Save(_projectId, SelectedTargets().Select(t => t.Key));
+
+    private IEnumerable<PackageTargetOptionViewModel> SelectedTargets() =>
+        PackagePlatforms.SelectMany(p => p.Targets).Where(t => t.IsSelected);
+
+    private void RestoreSelection(IReadOnlyCollection<string> remembered)
+    {
+        var keys = remembered.ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var targets = PackagePlatforms.SelectMany(p => p.Targets).ToList();
+
+        // Targets that no longer exist are ignored; if none survive, keep the defaults.
+        if (!targets.Any(t => keys.Contains(t.Key)))
+            return;
+
+        foreach (var target in targets)
+            target.IsSelected = keys.Contains(target.Key);
+    }
+
     public PackageBuildRequest? CreateRequest()
     {
         Error = null;
@@ -326,9 +357,7 @@ public partial class PackageBuildOptionsViewModel : ReactiveObject
             return null;
         }
 
-        var targets = PackagePlatforms
-            .SelectMany(p => p.Targets)
-            .Where(t => t.IsSelected)
+        var targets = SelectedTargets()
             .Select(t => new PackageBuildTarget
             {
                 Format = t.Format,
@@ -356,11 +385,35 @@ public partial class PackagePlatformViewModel : ReactiveObject
     {
         Name = name;
         Formats = new ObservableCollection<PackageFormatViewModel>(formats);
+
+        foreach (var target in Targets)
+            target.WhenAnyValue(x => x.IsSelected)
+                .Subscribe(_ => this.RaisePropertyChanged(nameof(AreAllSelected)));
     }
 
     public string Name { get; }
     public ObservableCollection<PackageFormatViewModel> Formats { get; }
     public IEnumerable<PackageTargetOptionViewModel> Targets => Formats.SelectMany(format => format.Architectures);
+
+    /// <summary>
+    /// True when every target of the platform is selected, false when none is, and null
+    /// when only some are. Setting it to true selects every target; any other value clears them.
+    /// </summary>
+    public bool? AreAllSelected
+    {
+        get
+        {
+            var selected = Targets.Count(t => t.IsSelected);
+            if (selected == 0) return false;
+            return selected == Targets.Count() ? true : null;
+        }
+        set
+        {
+            var select = value == true;
+            foreach (var target in Targets)
+                target.IsSelected = select;
+        }
+    }
 
     public static IEnumerable<PackagePlatformViewModel> CreateDefaults()
     {
@@ -414,15 +467,16 @@ public partial class PackagePlatformViewModel : ReactiveObject
             ])
         ]);
 
+        // Android packages are not tied to a desktop architecture: the format alone is the choice.
         yield return new PackagePlatformViewModel("Android",
         [
             new("APK", "apk",
             [
-                new("APK", "apk", "X64", "x64")
+                PackageTargetOptionViewModel.ArchitectureNeutral("APK", "apk")
             ]),
             new("AAB", "aab",
             [
-                new("AAB", "aab", "X64", "x64")
+                PackageTargetOptionViewModel.ArchitectureNeutral("AAB", "aab")
             ])
         ]);
     }
@@ -443,14 +497,19 @@ public class PackageFormatViewModel
     public string Label { get; }
     public string Format { get; }
     public ObservableCollection<PackageTargetOptionViewModel> Architectures { get; }
+    public bool HasArchitectureChoice => Architectures.Any(a => a.HasArchitecture);
 }
 
 public partial class PackageTargetOptionViewModel : ReactiveObject
 {
+    // The coordinator and DotnetDeployer always expect "<format>:<architecture>"; formats that
+    // ignore the architecture (Android) still send this one, but never show it.
+    private const string NeutralArchitecture = "x64";
+
     public PackageTargetOptionViewModel(
         string formatLabel,
         string format,
-        string architectureLabel,
+        string? architectureLabel,
         string architecture,
         bool isSelected = false)
     {
@@ -461,10 +520,20 @@ public partial class PackageTargetOptionViewModel : ReactiveObject
         _isSelected = isSelected;
     }
 
+    public static PackageTargetOptionViewModel ArchitectureNeutral(string formatLabel, string format) =>
+        new(formatLabel, format, architectureLabel: null, NeutralArchitecture);
+
     public string FormatLabel { get; }
     public string Format { get; }
-    public string ArchitectureLabel { get; }
+    public string? ArchitectureLabel { get; }
     public string Architecture { get; }
+    public bool HasArchitecture => ArchitectureLabel is not null;
+
+    /// <summary>Text shown next to the checkbox: the architecture, or the format when it has none.</summary>
+    public string Label => ArchitectureLabel ?? FormatLabel;
+
+    /// <summary>Stable identity of the target, as sent to DotnetDeployer ("format:architecture").</summary>
+    public string Key => $"{Format}:{Architecture}";
 
     [Reactive] private bool _isSelected;
 }
