@@ -59,7 +59,7 @@ public sealed class SecretsEditingAndImportTests
         var dialog = new ScriptedDialog(confirm: true);
         using var secrets = new ProjectSecretsViewModel(projectId, "App", api.Client,
             Substitute.For<IConnectedFleetClientContext>(), dialog, Substitute.For<INotificationService>());
-        var secret = new ProjectSecretViewModel(new Secret { Name = "SIGNING_KEY", Value = "x" }, projectId, api.Client, dialog, secrets);
+        var secret = new ProjectSecretViewModel(new Secret { Name = "SIGNING_KEY", Value = "x" }, projectId, api.Client, dialog, Substitute.For<INotificationService>(), secrets);
         secrets.Secrets.Add(secret);
         await secret.EditCommand.Execute();
         secret.IsValueRevealed = true;
@@ -154,7 +154,7 @@ public sealed class SecretsEditingAndImportTests
             picker, dialog, Substitute.For<INotificationService>());
         foreach (var (name, value) in existing)
         {
-            secrets.Secrets.Add(new SecretViewModel(new Secret { Name = name, Value = value }, api.Client, dialog, secrets));
+            secrets.Secrets.Add(new SecretViewModel(new Secret { Name = name, Value = value }, api.Client, dialog, Substitute.For<INotificationService>(), secrets));
         }
 
         return secrets;

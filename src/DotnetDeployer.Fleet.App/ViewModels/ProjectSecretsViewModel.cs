@@ -153,6 +153,7 @@ public partial class ProjectSecretViewModel : ReactiveObject
     private void Edit()
     {
         IsValueRevealed = false;
+        IsSaved = false;
         IsEditing = true;
     }
 
@@ -177,12 +178,6 @@ public partial class ProjectSecretViewModel : ReactiveObject
         IsValueRevealed = false;
         IsEditing = false;
         IsSaved = true;
-    }
-
-    private void Edit()
-    {
-        IsSaved = false;
-        IsEditing = true;
     }
 
     private void Cancel()
