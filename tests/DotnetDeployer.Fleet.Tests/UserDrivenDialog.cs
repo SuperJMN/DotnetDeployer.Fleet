@@ -30,7 +30,7 @@ internal sealed class UserDrivenDialog(params Func<object?, OptionRole>[] steps)
         {
             var role = step(viewModel.GetValueOrDefault());
             var option = options.First(o => o.Role == role);
-            if (!await option.Command.CanExecute.FirstAsync())
+            if (!await IsEnabled(option))
                 throw new InvalidOperationException($"The {role} option is disabled.");
 
             Presses++;
@@ -41,6 +41,20 @@ internal sealed class UserDrivenDialog(params Func<object?, OptionRole>[] steps)
         }
 
         throw new InvalidOperationException("The dialog is still open after the scripted user ran out of steps.");
+    }
+
+    // A command reports the end of its previous run asynchronously, so a press that follows
+    // another one waits briefly for the option to become enabled again.
+    private static async Task<bool> IsEnabled(IOption option)
+    {
+        try
+        {
+            return await option.Command.CanExecute.FirstAsync(canExecute => canExecute).Timeout(TimeSpan.FromSeconds(5));
+        }
+        catch (TimeoutException)
+        {
+            return false;
+        }
     }
 
     private sealed class RecordingCloseable : ICloseable

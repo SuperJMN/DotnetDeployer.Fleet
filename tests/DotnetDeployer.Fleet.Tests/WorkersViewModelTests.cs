@@ -137,7 +137,7 @@ public sealed class WorkersViewModelTests
 
         result.IsFailure.Should().BeTrue();
         item.IsSaved.Should().BeFalse();
-        CanExecute(item.SaveConfigCommand).Should().BeTrue();
+        (await BecomesExecutable(item.SaveConfigCommand)).Should().BeTrue();
     }
 
     [Fact]
@@ -181,6 +181,19 @@ public sealed class WorkersViewModelTests
 
     private static bool CanExecute<TParam, TResult>(ReactiveUI.ReactiveCommand<TParam, TResult> command) =>
         command.CanExecute.FirstAsync().Wait();
+
+    // The end of a run reaches CanExecute asynchronously, so wait for it instead of reading the first value.
+    private static async Task<bool> BecomesExecutable<TParam, TResult>(ReactiveUI.ReactiveCommand<TParam, TResult> command)
+    {
+        try
+        {
+            return await command.CanExecute.FirstAsync(canExecute => canExecute).Timeout(TimeSpan.FromSeconds(5));
+        }
+        catch (TimeoutException)
+        {
+            return false;
+        }
+    }
 
     private static FleetApiClient.WorkerInfo Worker(string name, WorkerStatus status, string? version = null, double maxDiskGb = 10) =>
         new(Guid.NewGuid(), name, status, IsEmbedded: false, LastSeenAt: null,
