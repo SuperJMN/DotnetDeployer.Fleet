@@ -176,13 +176,17 @@
                         <EnhancedButton Icon="{Icon mdi-chevron-down}" Padding="6,4"
                                         Command="{Binding NextSearchResultCommand}"
                                         ToolTip.Tip="Next match" />
-                        <ComboBox ItemsSource="{Binding AvailableSeverities}"
-                                  SelectedItem="{Binding MinSeverity}"
-                                  MinWidth="120"
-                                  ToolTip.Tip="Minimum severity to show" />
-                        <EnhancedButton Content="Copy All" Icon="{Icon mdi-content-copy}"
+                        <ComboBox ItemsSource="{Binding SeverityFilters}"
+                                  SelectedValueBinding="{Binding Minimum, DataType=vm:SeverityFilterOption}"
+                                  DisplayMemberBinding="{Binding Label, DataType=vm:SeverityFilterOption}"
+                                  SelectedValue="{Binding MinSeverity}"
+                                  MinWidth="160"
+                                  ToolTip.Tip="Which log lines to show" />
+                        <EnhancedButton Content="Copy all" Icon="{Icon mdi-content-copy}"
                                         Command="{Binding CopyLogsCommand}"
-                                        ToolTip.Tip="Copy all log lines to clipboard" />
+                                        ToolTip.Tip="Copy every log line to the clipboard, including the ones the filter hides" />
+                        <TextBlock VerticalAlignment="Center" FontSize="11" Opacity="0.7"
+                                   Text="{Binding CopyResultText}" />
                     </FlexPanel>
                 </Border>
 
