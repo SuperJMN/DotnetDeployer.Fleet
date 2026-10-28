@@ -7,7 +7,6 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
 using NSubstitute;
-using System.Diagnostics;
 
 namespace DotnetDeployer.Fleet.Tests;
 
@@ -196,26 +195,8 @@ public class PollingBackgroundServiceTests
         return repo;
     }
 
-    private static void RunGit(string workingDirectory, params string[] args)
-    {
-        var psi = new ProcessStartInfo("git")
-        {
-            WorkingDirectory = workingDirectory,
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            UseShellExecute = false
-        };
-        foreach (var arg in args)
-            psi.ArgumentList.Add(arg);
-
-        using var process = Process.Start(psi) ?? throw new InvalidOperationException("Unable to start git.");
-        var stdout = process.StandardOutput.ReadToEnd();
-        var stderr = process.StandardError.ReadToEnd();
-        process.WaitForExit();
-
-        if (process.ExitCode != 0)
-            throw new InvalidOperationException($"git {string.Join(" ", args)} failed with exit code {process.ExitCode}.{Environment.NewLine}{stdout}{stderr}");
-    }
+    private static void RunGit(string workingDirectory, params string[] args) =>
+        TestProcess.Run("git", workingDirectory, args).EnsureSuccess();
 
     private static void DeleteIfExists(string path)
     {

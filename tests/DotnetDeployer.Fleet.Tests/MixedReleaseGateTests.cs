@@ -1,4 +1,3 @@
-using System.Diagnostics;
 using DotnetDeployer.Fleet.Coordinator.Data;
 using DotnetDeployer.Fleet.Coordinator.Services;
 using DotnetDeployer.Fleet.Core.Domain;
@@ -550,28 +549,7 @@ public sealed class MixedReleaseGateTests : IDisposable
 
     private static async Task<string> RunGitCommandAsync(string workingDir, params string[] args)
     {
-        var psi = new ProcessStartInfo("git")
-        {
-            WorkingDirectory = workingDir,
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            UseShellExecute = false
-        };
-        foreach (var arg in args)
-            psi.ArgumentList.Add(arg);
-
-        using var process = Process.Start(psi)
-            ?? throw new InvalidOperationException($"Failed to start git with args {string.Join(" ", args)}");
-
-        var stdoutTask = process.StandardOutput.ReadToEndAsync();
-        var stderrTask = process.StandardError.ReadToEndAsync();
-        await process.WaitForExitAsync();
-        var stdout = await stdoutTask;
-        var stderr = await stderrTask;
-
-        if (process.ExitCode != 0)
-            throw new InvalidOperationException($"git {string.Join(" ", args)} failed (code {process.ExitCode}): {stderr}");
-
-        return stdout.Trim();
+        var result = await TestProcess.RunAsync("git", workingDir, args);
+        return result.EnsureSuccess().StandardOutput.Trim();
     }
 }
