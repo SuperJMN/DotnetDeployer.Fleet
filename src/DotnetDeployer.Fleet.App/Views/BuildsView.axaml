@@ -31,6 +31,20 @@
                      Height="4"
                      Margin="0,0,0,8" />
 
+        <Border DockPanel.Dock="Top" Classes="ListPlaceholder" IsVisible="{Binding BuildsStatus.IsLoadingFirstItems}">
+            <StackPanel>
+                <ProgressBar />
+                <TextBlock Classes="Hint" Text="Loading builds…" />
+            </StackPanel>
+        </Border>
+
+        <Border DockPanel.Dock="Top" Classes="ListPlaceholder" IsVisible="{Binding BuildsStatus.IsEmpty}">
+            <StackPanel>
+                <TextBlock Classes="Title" Text="No builds yet" />
+                <TextBlock Classes="Hint" Text="Open a project and use Queue Build or Queue Deploy to start one." />
+            </StackPanel>
+        </Border>
+
         <ScrollViewer HorizontalScrollBarVisibility="Disabled">
             <ItemsControl ItemsSource="{Binding Builds}" />
         </ScrollViewer>

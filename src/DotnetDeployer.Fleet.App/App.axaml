@@ -56,6 +56,36 @@
         <Style Selector="Frame">
             <Setter Property="Padding" Value="0" />
         </Style>
+
+        <!-- What a list shows instead of its items while it loads or when it has none. -->
+        <Style Selector="Border.ListPlaceholder">
+            <Setter Property="Background" Value="{DynamicResource SystemControlBackgroundAltHighBrush}" />
+            <Setter Property="CornerRadius" Value="6" />
+            <Setter Property="Padding" Value="24" />
+            <Setter Property="HorizontalAlignment" Value="Stretch" />
+        </Style>
+        <Style Selector="Border.ListPlaceholder > StackPanel">
+            <Setter Property="Spacing" Value="8" />
+            <Setter Property="MaxWidth" Value="620" />
+            <Setter Property="HorizontalAlignment" Value="Center" />
+            <Setter Property="VerticalAlignment" Value="Center" />
+        </Style>
+        <Style Selector="Border.ListPlaceholder TextBlock">
+            <Setter Property="TextAlignment" Value="Center" />
+            <Setter Property="TextWrapping" Value="Wrap" />
+        </Style>
+        <Style Selector="Border.ListPlaceholder TextBlock.Title">
+            <Setter Property="FontSize" Value="16" />
+            <Setter Property="FontWeight" Value="SemiBold" />
+        </Style>
+        <Style Selector="Border.ListPlaceholder TextBlock.Hint">
+            <Setter Property="Opacity" Value="0.7" />
+        </Style>
+        <Style Selector="Border.ListPlaceholder ProgressBar">
+            <Setter Property="IsIndeterminate" Value="True" />
+            <Setter Property="Width" Value="200" />
+            <Setter Property="HorizontalAlignment" Value="Center" />
+        </Style>
     </Application.Styles>
 
     <Application.DataTemplates>

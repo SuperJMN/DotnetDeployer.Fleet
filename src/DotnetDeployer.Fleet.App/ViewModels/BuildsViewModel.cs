@@ -32,6 +32,7 @@ public partial class BuildsViewModel : ReactiveObject, IHaveHeader, IDisposable
     [Reactive] private string? error;
 
     public ObservableCollection<JobViewModel> Builds { get; } = [];
+    public ListStatus BuildsStatus { get; }
 
     public BuildsViewModel(
         IConnectedFleetClientContext clientContext,
@@ -46,6 +47,8 @@ public partial class BuildsViewModel : ReactiveObject, IHaveHeader, IDisposable
         this.fileSystemPicker = fileSystemPicker;
         this.dialog = dialog;
         this.notificationService = notificationService;
+        BuildsStatus = ListStatus.Of(Builds, this.WhenAnyValue(vm => vm.IsLoading));
+        disposables.Add(BuildsStatus);
 
         RefreshCommand = ReactiveCommand.CreateFromTask(LoadBuilds);
         ClearFinishedJobsCommand = ReactiveCommand.CreateFromTask(ClearFinishedJobs);
