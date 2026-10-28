@@ -44,6 +44,8 @@ public class App : Application
         services.AddSingleton(fleetClient);
         services.AddSingleton<ISettingsService>(
             OperatingSystem.IsBrowser() ? new InMemorySettingsService() : new FileSettingsService());
+        services.AddSingleton<IPackageTargetSelectionStore>(
+            OperatingSystem.IsBrowser() ? new InMemoryPackageTargetSelectionStore() : new FilePackageTargetSelectionStore());
         services.AddSingleton<IBackendHealthMonitor, BackendHealthMonitor>();
 
         services.AddSingleton<IShell, Zafiro.UI.Shell.Shell>();

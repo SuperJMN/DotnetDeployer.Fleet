@@ -42,7 +42,7 @@ public sealed class DestructiveConfirmationTests
         var api = new RecordingApi();
         var dialog = new ScriptedDialog(confirm: true);
         var parent = new ProjectsViewModel(Substitute.For<IConnectedFleetClientContext>(), Substitute.For<INavigator>(),
-            Substitute.For<IFileSystemPicker>(), dialog, Substitute.For<INotificationService>());
+            Substitute.For<IFileSystemPicker>(), dialog, Substitute.For<INotificationService>(), new InMemoryPackageTargetSelectionStore());
         var vm = new ProjectViewModel(project, api.Client, Substitute.For<INavigator>(), parent,
             Substitute.For<IFileSystemPicker>(), dialog, Substitute.For<INotificationService>());
 
@@ -237,7 +237,8 @@ public sealed class DestructiveConfirmationTests
         var context = Substitute.For<IConnectedFleetClientContext>();
         context.Require().Returns(Task.FromResult(Maybe.From(Result.Success(api.Client))));
         return new ProjectDetailViewModel(project, api.Client, context, Substitute.For<INavigator>(),
-            Substitute.For<IFileSystemPicker>(), dialog, Substitute.For<INotificationService>());
+            Substitute.For<IFileSystemPicker>(), dialog, Substitute.For<INotificationService>(),
+            new InMemoryPackageTargetSelectionStore());
     }
 
     private static SecretsViewModel GlobalSecretsWith(RecordingApi api, ScriptedDialog dialog, string name, out SecretViewModel secret)
