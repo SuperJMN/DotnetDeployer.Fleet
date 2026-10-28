@@ -184,6 +184,7 @@ public static class CoordinatorHostBuilder
 
         await EnsureRunTestsBeforeDeployColumnAsync(db);
         await EnsureExpectedPackageIdsColumnAsync(db);
+        await EnsureProjectDeploySummaryColumnsAsync(db);
 
         var hasCancellationRequestedAt = (await db.Database
             .SqlQueryRaw<long>("SELECT COUNT(*) AS \"Value\" FROM pragma_table_info('DeploymentJobs') WHERE name='CancellationRequestedAt'")
@@ -296,6 +297,10 @@ public static class CoordinatorHostBuilder
                 orphanedJobs.Count, activeWorkers.Count);
         }
 
+        // Runs after reconciliation so the deploys it just failed are summarised too, and
+        // fills the summary of projects whose deploys predate it.
+        await ProjectDeploySummary.BackfillAsync(db);
+
         var storage = app.Services.GetRequiredService<IFleetStorage>();
         if (!await storage.AnyUserExistsAsync())
         {
@@ -344,6 +349,32 @@ public static class CoordinatorHostBuilder
         {
             await db.Database.ExecuteSqlRawAsync(
                 "ALTER TABLE \"Projects\" ADD COLUMN \"ExpectedPackageIds\" TEXT NOT NULL DEFAULT '[]'");
+        }
+    }
+
+    /// <summary>
+    /// Adds the columns behind the last-deploy summary kept on each project (issue #74).
+    /// </summary>
+    internal static async Task EnsureProjectDeploySummaryColumnsAsync(FleetDbContext db)
+    {
+        await EnsureProjectColumnAsync(db, "LastDeployJobId", "TEXT NULL");
+        await EnsureProjectColumnAsync(db, "LastDeployFinishedAt", "INTEGER NULL");
+        await EnsureProjectColumnAsync(db, "LastDeployStatus", "INTEGER NULL");
+        await EnsureProjectColumnAsync(db, "LastDeployVersion", "TEXT NULL");
+        await EnsureProjectColumnAsync(db, "LastDeployCommitSha", "TEXT NULL");
+        await EnsureProjectColumnAsync(db, "LastDeployNuGetVerification", "INTEGER NULL");
+        await EnsureProjectColumnAsync(db, "LastActivityAt", "INTEGER NULL");
+    }
+
+    private static async Task EnsureProjectColumnAsync(FleetDbContext db, string columnName, string columnDefinition)
+    {
+        var exists = (await db.Database
+            .SqlQueryRaw<long>($"SELECT COUNT(*) AS \"Value\" FROM pragma_table_info('Projects') WHERE name='{columnName}'")
+            .ToListAsync()).FirstOrDefault() > 0;
+        if (!exists)
+        {
+            await db.Database.ExecuteSqlRawAsync(
+                $"ALTER TABLE \"Projects\" ADD COLUMN \"{columnName}\" {columnDefinition}");
         }
     }
 

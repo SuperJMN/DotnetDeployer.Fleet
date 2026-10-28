@@ -31,5 +31,25 @@ public class Project
 
     public string? LastPolledCommitSha { get; set; }
     public DateTimeOffset? LastPolledAt { get; set; }
+
+    // Summary of the most recently finished deploy. Kept on the project so it survives
+    // "Clear Builds", which deletes finished jobs. Maintained by the coordinator's storage
+    // whenever a deploy job finishes or its NuGet verification changes; project edits never
+    // overwrite it.
+
+    /// <summary>Id of the most recently finished deploy job. The job itself may have been cleared.</summary>
+    public Guid? LastDeployJobId { get; set; }
+
+    public DateTimeOffset? LastDeployFinishedAt { get; set; }
+
+    /// <summary><see cref="JobStatus.Succeeded"/>, <see cref="JobStatus.Failed"/> or <see cref="JobStatus.Cancelled"/>.</summary>
+    public JobStatus? LastDeployStatus { get; set; }
+
+    public string? LastDeployVersion { get; set; }
+    public string? LastDeployCommitSha { get; set; }
+    public NuGetVerificationStatus? LastDeployNuGetVerification { get; set; }
+
+    /// <summary>When any job of this project (deploy or package build) last finished.</summary>
+    public DateTimeOffset? LastActivityAt { get; set; }
     public DateTimeOffset CreatedAt { get; set; } = DateTimeOffset.UtcNow;
 }
