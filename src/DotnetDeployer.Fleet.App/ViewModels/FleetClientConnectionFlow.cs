@@ -8,8 +8,29 @@ using Zafiro.UI.Commands;
 
 namespace DotnetDeployer.Fleet.App.ViewModels;
 
-public sealed class FleetClientConnectionFlow(IServiceProvider services, IDialog dialog) : IFleetClientConnectionFlow
+/// <summary>
+/// Shows the connect and sign-in dialogs. A dialog only closes once its action succeeds: when it fails,
+/// the dialog stays open with whatever the user typed and the reason shown inside, so the user can
+/// correct it and retry or cancel.
+/// </summary>
+public sealed class FleetClientConnectionFlow : IFleetClientConnectionFlow
 {
+    private readonly IServiceProvider services;
+    private readonly IDialog dialog;
+    private readonly Func<Task> waitForDialogToClose;
+
+    public FleetClientConnectionFlow(IServiceProvider services, IDialog dialog)
+        : this(services, dialog, () => Dispatcher.UIThread.InvokeAsync(() => { }, DispatcherPriority.Background).GetTask())
+    {
+    }
+
+    internal FleetClientConnectionFlow(IServiceProvider services, IDialog dialog, Func<Task> waitForDialogToClose)
+    {
+        this.services = services;
+        this.dialog = dialog;
+        this.waitForDialogToClose = waitForDialogToClose;
+    }
+
     public Task<Maybe<Result>> Connect()
     {
         var viewModel = services.GetRequiredService<ConnectDialogViewModel>();
@@ -30,13 +51,13 @@ public sealed class FleetClientConnectionFlow(IServiceProvider services, IDialog
         Func<TViewModel, IObservable<bool>> canExecute)
         where TViewModel : class
     {
-        var captured = Maybe<Result>.None;
         var completed = await dialog.Show<TViewModel>(viewModel, title, (vm, closeable) =>
         {
             var command = ReactiveCommand.CreateFromTask(async () =>
             {
-                captured = Maybe.From(await action(vm));
-                closeable.Close();
+                var result = await action(vm);
+                if (result.IsSuccess)
+                    closeable.Close();
             }, canExecute(vm)).Enhance();
 
             return new IOption[]
@@ -53,10 +74,8 @@ public sealed class FleetClientConnectionFlow(IServiceProvider services, IDialog
         if (!completed)
             return Maybe<Result>.None;
 
-        await Dispatcher.UIThread.InvokeAsync(() => { }, DispatcherPriority.Background);
+        await waitForDialogToClose();
 
-        return captured.HasValue
-            ? captured
-            : Maybe.From(Result.Failure($"{title} did not complete."));
+        return Maybe.From(Result.Success());
     }
 }
