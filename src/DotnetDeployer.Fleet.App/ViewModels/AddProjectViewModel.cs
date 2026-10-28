@@ -5,9 +5,10 @@ using ReactiveUI.SourceGenerators;
 
 namespace DotnetDeployer.Fleet.App.ViewModels;
 
-public partial class AddProjectViewModel : ReactiveObject
+public partial class AddProjectViewModel : ReactiveObject, IProjectForm
 {
     private readonly FleetApiClient _client;
+    private readonly ProjectFormState _initialState;
 
     [Reactive] private string _name = string.Empty;
     [Reactive] private string _gitUrl = string.Empty;
@@ -26,11 +27,15 @@ public partial class AddProjectViewModel : ReactiveObject
                 x => x.Name, x => x.GitUrl, x => x.Branch,
                 HasRequiredFields)
             .CombineLatest(Polling.IsValid, (hasRequiredFields, isPollingValid) => hasRequiredFields && isPollingValid);
+
+        _initialState = CurrentState();
     }
 
     public PollingIntervalViewModel Polling { get; } = new(0);
 
     public IObservable<bool> CanSave { get; }
+
+    public bool HasChanges => CurrentState() != _initialState;
 
     public async Task<bool> TrySaveAsync()
     {
@@ -52,10 +57,7 @@ public partial class AddProjectViewModel : ReactiveObject
             }
 
             var token = string.IsNullOrWhiteSpace(GitToken) ? null : GitToken;
-            var packageIds = ExpectedPackageIdsText
-                .Split(['\r', '\n', ',', ';'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
-                .Distinct(StringComparer.OrdinalIgnoreCase)
-                .ToList();
+            var packageIds = ProjectFormState.ParsePackageIds(ExpectedPackageIdsText);
 
             await _client.CreateProjectAsync(Name, GitUrl, Branch, polling.Value, token, RunTestsBeforeDeploy, packageIds);
             return true;
@@ -70,6 +72,9 @@ public partial class AddProjectViewModel : ReactiveObject
             IsBusy = false;
         }
     }
+
+    private ProjectFormState CurrentState() =>
+        new(Name, GitUrl, Branch, GitToken, RunTestsBeforeDeploy, ExpectedPackageIdsText, Polling.IsAutomatic, Polling.Minutes);
 
     private static bool HasRequiredFields(string name, string gitUrl, string branch) =>
         !string.IsNullOrWhiteSpace(name)

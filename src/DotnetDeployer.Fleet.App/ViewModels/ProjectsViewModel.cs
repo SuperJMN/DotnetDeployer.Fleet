@@ -92,26 +92,7 @@ public partial class ProjectsViewModel : ReactiveObject, IHaveHeader, IDisposabl
         {
             var vm = new AddProjectViewModel(client);
 
-            var created = await _dialog.Show(vm, "Add Project", (_, closeable) =>
-            {
-                var saveCommand = ReactiveCommand.CreateFromTask(async () =>
-                {
-                    if (await vm.TrySaveAsync())
-                    {
-                        closeable.Close();
-                    }
-                }, vm.CanSave).Enhance();
-
-                return new IOption[]
-                {
-                    new DialogOption("Cancel",
-                        ReactiveCommand.Create(closeable.Dismiss).Enhance(),
-                        new Settings { IsCancel = true, Role = OptionRole.Cancel }),
-                    new DialogOption("Save",
-                        saveCommand,
-                        new Settings { IsDefault = true, Role = OptionRole.Primary }),
-                };
-            });
+            var created = await _dialog.ShowProjectForm(vm, "Add Project");
 
             if (created)
             {
@@ -168,7 +149,7 @@ public partial class ProjectViewModel : ReactiveObject
         _dialog = dialog;
 
         OpenCommand = ReactiveCommand.Create(Open);
-        EditCommand = ReactiveCommand.Create(Edit);
+        EditCommand = ReactiveCommand.CreateFromTask(EditAsync);
         ChangeIconCommand = ReactiveCommand.CreateFromTask(ChangeProjectIcon);
         ResetIconCommand = ReactiveCommand.CreateFromTask(ResetProjectIcon);
         DeleteCommand = ReactiveCommand.CreateFromTask(DeleteAsync);
@@ -273,9 +254,10 @@ public partial class ProjectViewModel : ReactiveObject
             _parent.PackageTargetSelections));
     }
 
-    private void Edit()
+    private async Task EditAsync()
     {
-        _navigator.Go(() => new EditProjectViewModel(Project, _client, _navigator, _parent));
+        if (await _dialog.ShowProjectForm(new EditProjectViewModel(Project, _client), "Edit Project"))
+            _parent.RefreshCommand.Execute(Unit.Default).Subscribe();
     }
 
     private async Task DeleteAsync()

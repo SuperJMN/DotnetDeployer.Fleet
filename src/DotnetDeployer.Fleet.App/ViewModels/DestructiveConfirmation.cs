@@ -17,10 +17,10 @@ internal static class DestructiveConfirmation
     /// option, so Enter, Escape or dismissing the dialog never confirm: only the destructive
     /// button returns true.
     /// </summary>
-    public static Task<bool> ConfirmDestructive(this IDialog dialog, string title, string message, string confirmText) =>
+    public static Task<bool> ConfirmDestructive(this IDialog dialog, string title, string message, string confirmText, string cancelText = "Cancel") =>
         dialog.Show(new MessageDialogViewModel(message), title, closeable => new IOption[]
         {
-            new DialogOption("Cancel",
+            new DialogOption(cancelText,
                 ReactiveCommand.Create(closeable.Dismiss).Enhance(),
                 new Settings { IsCancel = true, IsDefault = true, Role = OptionRole.Cancel }),
             new DialogOption(confirmText,
