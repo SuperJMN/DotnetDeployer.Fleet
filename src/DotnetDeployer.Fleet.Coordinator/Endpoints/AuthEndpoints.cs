@@ -1,6 +1,7 @@
 using static BCrypt.Net.BCrypt;
 using System.Security.Claims;
 using DotnetDeployer.Fleet.Coordinator.Auth;
+using DotnetDeployer.Fleet.Core.Api;
 using DotnetDeployer.Fleet.Core.Domain;
 using DotnetDeployer.Fleet.Core.Interfaces;
 using Microsoft.AspNetCore.Mvc;
@@ -15,6 +16,7 @@ public static class AuthEndpoints
 
         group.MapPost("/login", Login);
         group.MapGet("/session", Session).RequireAuthorization();
+        group.MapPost("/tokens", CreateApiToken).RequireAuthorization(AccessPolicies.Write);
         group.MapPost("/users", CreateUser).RequireAuthorization("Admin");
         group.MapGet("/users", ListUsers).RequireAuthorization("Admin");
         group.MapDelete("/users/{id:guid}", DeleteUser).RequireAuthorization("Admin");
@@ -38,6 +40,30 @@ public static class AuthEndpoints
         var username = httpContext.User.FindFirstValue(ClaimTypes.Name) ?? string.Empty;
         var role = httpContext.User.FindFirstValue(ClaimTypes.Role) ?? string.Empty;
         return Results.Ok(new { username, role });
+    }
+
+    internal const int DefaultApiTokenDays = 90;
+    internal const int MaxApiTokenDays = 365;
+
+    /// <summary>
+    /// Issues a long-lived token for an agent or script. Read-only by default, so an agent can
+    /// diagnose without being able to deploy or read secrets.
+    /// </summary>
+    internal static IResult CreateApiToken(
+        [FromBody] CreateApiTokenRequest? req,
+        HttpContext httpContext,
+        JwtService jwt)
+    {
+        var request = req ?? new CreateApiTokenRequest();
+        var username = httpContext.User.FindFirstValue(ClaimTypes.Name) ?? string.Empty;
+        var userId = httpContext.User.FindFirstValue(ClaimTypes.NameIdentifier) ?? string.Empty;
+        if (!Enum.TryParse<UserRole>(httpContext.User.FindFirstValue(ClaimTypes.Role), out var callerRole))
+            return Results.Forbid();
+
+        var role = request.ReadOnly ? UserRole.Reader : callerRole;
+        var days = Math.Clamp(request.Days ?? DefaultApiTokenDays, 1, MaxApiTokenDays);
+        var (token, expiresAt) = jwt.GenerateApiToken(userId, username, role, TimeSpan.FromDays(days));
+        return Results.Ok(new ApiTokenResponse(token, username, role.ToString(), expiresAt));
     }
 
     private static async Task<IResult> CreateUser(

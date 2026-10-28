@@ -22,6 +22,7 @@
   </ItemGroup>
 
   <ItemGroup>
+    <ProjectReference Include="..\DotnetDeployer.Fleet.Api.Client\DotnetDeployer.Fleet.Api.Client.csproj" />
     <ProjectReference Include="..\DotnetDeployer.Fleet.Coordinator\DotnetDeployer.Fleet.Coordinator.csproj" />
     <ProjectReference Include="..\DotnetDeployer.Fleet.Worker\DotnetDeployer.Fleet.Worker.csproj" />
   </ItemGroup>

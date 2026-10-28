@@ -1,6 +1,7 @@
 using System.Reflection;
 using System.CommandLine;
 using DotnetDeployer.Fleet.Coordinator;
+using DotnetDeployer.Fleet.Tooling.Agents;
 using DotnetDeployer.Fleet.WorkerService;
 using Microsoft.Extensions.Hosting;
 using Serilog;
@@ -11,7 +12,7 @@ public static class FleetTool
 {
     public static int Run(string[] args)
     {
-        var rootCommand = new RootCommand($"{ToolIdentity.ProductName} — run DotnetDeployer on managed machines");
+        var rootCommand = new RootCommand($"{ToolIdentity.ProductName} — run DotnetDeployer on managed machines, and query or drive it as a client (also as an MCP server for AI agents)");
 
         // ── fleet coordinator ────────────────────────────────────────────────────────
 
@@ -409,7 +410,27 @@ public static class FleetTool
         rootCommand.Subcommands.Add(updateCommand);
         rootCommand.Subcommands.Add(versionCommand);
 
-        return rootCommand.Parse(args).Invoke();
+        // ── Client commands for people and agents (projects, jobs, logs, …) and fleet mcp ──
+        AgentCli.AddTo(rootCommand);
+
+        var parseResult = rootCommand.Parse(args);
+        if (parseResult.Errors.Count > 0 && AgentCli.ClientCommands.Contains(parseResult.CommandResult.Command))
+        {
+            foreach (var error in parseResult.Errors)
+                Console.Error.WriteLine($"Error: {error.Message}");
+            Console.Error.WriteLine($"Run 'fleet {string.Join(' ', CommandPath(parseResult))} --help' for usage.");
+            return FleetExitCode.UsageOrAuth;
+        }
+
+        return parseResult.Invoke();
+    }
+
+    private static IEnumerable<string> CommandPath(ParseResult parseResult)
+    {
+        var names = new Stack<string>();
+        for (var result = parseResult.CommandResult; result.Parent is System.CommandLine.Parsing.CommandResult parent; result = parent)
+            names.Push(result.Command.Name);
+        return names;
     }
 
     private static void PrintCoordinatorBanner(int port, string registrationToken, string adminPassword, string? urls)

@@ -1,6 +1,8 @@
 using System.Net.Http.Json;
 using DotnetDeployer.Fleet.Core.Domain;
+using DotnetDeployer.Fleet.WorkerService.Bootstrap;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
 
 namespace DotnetDeployer.Fleet.WorkerService.Coordinator;
 
@@ -9,10 +11,29 @@ public class HttpWorkerCoordinatorClient : IWorkerCoordinatorClient
     private readonly HttpClient http;
     private readonly ILogger<HttpWorkerCoordinatorClient> logger;
 
+    private readonly WorkerEnvironmentProbe? environmentProbe;
+
     public HttpWorkerCoordinatorClient(HttpClient http, ILogger<HttpWorkerCoordinatorClient> logger)
     {
         this.http = http;
         this.logger = logger;
+    }
+
+    [Microsoft.Extensions.DependencyInjection.ActivatorUtilitiesConstructor]
+    public HttpWorkerCoordinatorClient(HttpClient http, ILogger<HttpWorkerCoordinatorClient> logger, IOptions<WorkerOptions> options)
+        : this(http, logger)
+    {
+        environmentProbe = SharedProbe(options.Value.RepoStoragePath);
+    }
+
+    private static readonly object ProbeGate = new();
+    private static WorkerEnvironmentProbe? sharedProbe;
+
+    // The typed client is transient; one probe per process keeps the workload listing cached.
+    private static WorkerEnvironmentProbe SharedProbe(string repoStoragePath)
+    {
+        lock (ProbeGate)
+            return sharedProbe ??= new WorkerEnvironmentProbe(repoStoragePath);
     }
 
     public async Task<Worker?> GetSelfAsync(CancellationToken ct = default)
@@ -58,7 +79,8 @@ public class HttpWorkerCoordinatorClient : IWorkerCoordinatorClient
                     totalMemoryMb = caps.TotalMemoryMb,
                     operatingSystem = caps.OperatingSystem,
                     architecture = caps.Architecture,
-                    cpuModel = caps.CpuModel
+                    cpuModel = caps.CpuModel,
+                    environment = environmentProbe?.Current()
                 };
                 resp = await http.PostAsJsonAsync($"/api/workers/{workerId}/heartbeat", payload, cts.Token);
             }
