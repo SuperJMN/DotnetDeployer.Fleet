@@ -110,6 +110,27 @@ public sealed class ProjectFormDialogTests
         dialog.Titles.Should().Equal("Add Project", "Discard changes?");
     }
 
+    [Fact]
+    public async Task Closing_the_dialog_while_a_save_runs_waits_for_it_instead_of_asking_to_discard()
+    {
+        var api = new RecordingApi(holdUpdates: true);
+        var cancelWhileSaving = true;
+        var dialog = new UserDialog(
+            UserDialog.Edit<EditProjectViewModel>(form => form.Name = "Renamed"),
+            UserDialog.Start(OptionRole.Primary),
+            new UserDialog.Step(shown => cancelWhileSaving = shown.Options.First(o => o.Role == OptionRole.Cancel).Command.CanExecute(null), ClosesDialog: false),
+            UserDialog.Dismiss);
+
+        var showing = dialog.ShowProjectForm(new EditProjectViewModel(AProject(), api.Client), "Edit Project");
+        api.ReleaseUpdates();
+        var saved = await showing.WaitAsync(TimeSpan.FromSeconds(30));
+
+        saved.Should().BeTrue();
+        cancelWhileSaving.Should().BeFalse();
+        dialog.Titles.Should().Equal("Edit Project");
+        api.Updates.Should().ContainSingle().Which.Should().Contain("\"name\":\"Renamed\"");
+    }
+
     private static Project AProject() =>
         new() { Id = Guid.NewGuid(), Name = "App", GitUrl = "https://example.test/repo.git", Branch = "master" };
 
@@ -138,6 +159,9 @@ public sealed class ProjectFormDialogTests
 
         public static Step Press(OptionRole role) =>
             new(shown => shown.Options.First(option => option.Role == role).Command.Execute(null), ClosesDialog: true);
+
+        public static Step Start(OptionRole role) =>
+            new(shown => shown.Options.First(option => option.Role == role).Command.Execute(null), ClosesDialog: false);
 
         public static Step Edit<TForm>(Action<TForm> edit) =>
             new(shown => edit((TForm)shown.ViewModel!), ClosesDialog: false);
@@ -184,12 +208,18 @@ public sealed class ProjectFormDialogTests
 
     private sealed class RecordingApi
     {
-        public RecordingApi()
+        private readonly TaskCompletionSource updatesReleased = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public RecordingApi(bool holdUpdates = false)
         {
+            if (!holdUpdates)
+                updatesReleased.SetResult();
+
             var handler = new StubHandler(async request =>
             {
                 if (request.Method == HttpMethod.Put)
                 {
+                    await updatesReleased.Task;
                     Updates.Add(await request.Content!.ReadAsStringAsync());
                     return new HttpResponseMessage(HttpStatusCode.OK);
                 }
@@ -205,6 +235,8 @@ public sealed class ProjectFormDialogTests
 
         public FleetApiClient Client { get; }
         public List<string> Updates { get; } = [];
+
+        public void ReleaseUpdates() => updatesReleased.TrySetResult();
     }
 
     private sealed class StubHandler(Func<HttpRequestMessage, Task<HttpResponseMessage>> response) : HttpMessageHandler

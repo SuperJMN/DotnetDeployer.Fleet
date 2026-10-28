@@ -1,3 +1,4 @@
+using System.Reactive.Linq;
 using ReactiveUI;
 using Zafiro.Avalonia.Dialogs;
 using Zafiro.UI.Commands;
@@ -10,35 +11,45 @@ internal static class ProjectFormDialog
     /// <summary>
     /// Shows the project form in a dialog and returns true once it is saved. Leaving a form with
     /// unsaved changes (Cancel, Escape or the close button) asks first; keeping on editing shows
-    /// the same form again, with the changes still there.
+    /// the same form again, with the changes still there. Cancel is disabled while a save runs,
+    /// and a save still running when the dialog is closed is awaited before asking anything.
     /// </summary>
     public static async Task<bool> ShowProjectForm<TForm>(this IDialog dialog, TForm form, string title)
         where TForm : class, IProjectForm
     {
         while (true)
         {
+            Task<bool>? runningSave = null;
+            var isOpen = true;
+
             var saved = await dialog.Show(form, title, (_, closeable) =>
             {
                 var saveCommand = ReactiveCommand.CreateFromTask(async () =>
                 {
-                    if (await form.TrySaveAsync())
+                    runningSave = form.TrySaveAsync();
+                    if (await runningSave && isOpen)
                     {
                         closeable.Close();
                     }
-                }, form.CanSave).Enhance();
+                }, form.CanSave);
 
                 return new IOption[]
                 {
                     new DialogOption("Cancel",
-                        ReactiveCommand.Create(closeable.Dismiss).Enhance(),
+                        ReactiveCommand.Create(closeable.Dismiss, saveCommand.IsExecuting.Select(busy => !busy)).Enhance(),
                         new Settings { IsCancel = true, Role = OptionRole.Cancel }),
                     new DialogOption("Save",
-                        saveCommand,
+                        saveCommand.Enhance(),
                         new Settings { IsDefault = true, Role = OptionRole.Primary }),
                 };
             });
 
+            isOpen = false;
+
             if (saved)
+                return true;
+
+            if (runningSave is not null && await runningSave)
                 return true;
 
             if (!form.HasChanges)
