@@ -22,6 +22,7 @@ public partial class SecretsViewModel : ReactiveObject, IHaveHeader, IDisposable
     private readonly IConnectedFleetClientContext clientContext;
     private readonly IFileSystemPicker _picker;
     private readonly IDialog _dialog;
+    private readonly INotificationService _notificationService;
     private readonly CompositeDisposable _disposables = [];
 
     [Reactive] private bool _isLoading;
@@ -42,6 +43,7 @@ public partial class SecretsViewModel : ReactiveObject, IHaveHeader, IDisposable
         this.clientContext = clientContext;
         _picker = picker;
         _dialog = dialog;
+        _notificationService = notificationService;
 
         var canAdd = this.WhenAnyValue(x => x.NewName, x => x.NewValue,
             (n, v) => !string.IsNullOrWhiteSpace(n) && !string.IsNullOrWhiteSpace(v));
@@ -78,7 +80,7 @@ public partial class SecretsViewModel : ReactiveObject, IHaveHeader, IDisposable
                     secrets,
                     secret => secret.Id,
                     viewModel => viewModel.Secret.Id,
-                    secret => new SecretViewModel(secret, client, _dialog, this),
+                    secret => new SecretViewModel(secret, client, _dialog, _notificationService, this),
                     (viewModel, secret) => viewModel.ApplySecretUpdate(secret));
             });
         }
@@ -91,7 +93,7 @@ public partial class SecretsViewModel : ReactiveObject, IHaveHeader, IDisposable
     private async Task AddAsync()
     {
         var secret = await _client.CreateSecretAsync(NewName.Trim(), NewValue);
-        Secrets.Add(new SecretViewModel(secret, _client, _dialog, this));
+        Secrets.Add(new SecretViewModel(secret, _client, _dialog, _notificationService, this));
         NewName = "";
         NewValue = "";
     }
@@ -133,22 +135,45 @@ public partial class SecretsViewModel : ReactiveObject, IHaveHeader, IDisposable
             .ToList();
 
         var existingByName = Secrets.ToDictionary(s => s.Name, StringComparer.Ordinal);
+        var applied = new List<string>();
 
         foreach (var (name, value) in parsedEntries)
         {
-            if (existingByName.TryGetValue(name, out var existing))
+            try
             {
-                await _client.UpdateSecretAsync(existing.Secret.Id, name, value);
-                existing.Name = name;
-                existing.Value = value;
-                continue;
+                await ApplyImportedSecret(existingByName, name, value);
+            }
+            catch (Exception ex)
+            {
+                throw new InvalidOperationException(PartialImportMessage(applied, parsedEntries.Count, name, ex), ex);
             }
 
-            var created = await _client.CreateSecretAsync(name, value);
-            var vm = new SecretViewModel(created, _client, _dialog, this);
-            Secrets.Add(vm);
-            existingByName[name] = vm;
+            applied.Add(name);
         }
+    }
+
+    private async Task ApplyImportedSecret(Dictionary<string, SecretViewModel> existingByName, string name, string value)
+    {
+        if (existingByName.TryGetValue(name, out var existing))
+        {
+            await _client.UpdateSecretAsync(existing.Secret.Id, name, value);
+            existing.Name = name;
+            existing.Value = value;
+            return;
+        }
+
+        var created = await _client.CreateSecretAsync(name, value);
+        var vm = new SecretViewModel(created, _client, _dialog, _notificationService, this);
+        Secrets.Add(vm);
+        existingByName[name] = vm;
+    }
+
+    private static string PartialImportMessage(IReadOnlyList<string> applied, int total, string failed, Exception error)
+    {
+        var appliedText = applied.Count == 0
+            ? "No secrets were imported."
+            : $"Imported {applied.Count} of {total} secrets: {string.Join(", ", applied)}.";
+        return $"Import stopped at \"{failed}\": {error.Message.TrimEnd('.')}. {appliedText}";
     }
 
     private static (string Name, string Value)? ParseEnvLine(string line)
@@ -204,8 +229,9 @@ public partial class SecretViewModel : ReactiveObject
     [Reactive] private string _name;
     [Reactive] private string _value;
     [Reactive] private bool _isEditing;
+    [Reactive] private bool _isSaved;
 
-    public SecretViewModel(Secret secret, FleetApiClient client, IDialog dialog, SecretsViewModel parent)
+    public SecretViewModel(Secret secret, FleetApiClient client, IDialog dialog, INotificationService notificationService, SecretsViewModel parent)
     {
         Secret = secret;
         _client = client;
@@ -216,11 +242,11 @@ public partial class SecretViewModel : ReactiveObject
 
         DeleteCommand = ReactiveCommand.CreateFromTask(DeleteAsync);
         SaveCommand = ReactiveCommand.CreateFromTask(SaveAsync);
-        EditCommand = ReactiveCommand.Create(() => { IsEditing = true; });
+        EditCommand = ReactiveCommand.Create(Edit);
         CancelCommand = ReactiveCommand.Create(Cancel);
 
-        DeleteCommand.ThrownExceptions.Subscribe(_ => { });
-        SaveCommand.ThrownExceptions.Subscribe(_ => { });
+        DeleteCommand.ThrownExceptions.NotifyWith(notificationService, "Cannot delete secret");
+        SaveCommand.ThrownExceptions.NotifyWith(notificationService, "Cannot save secret");
     }
 
     public ReactiveCommand<Unit, Unit> DeleteCommand { get; }
@@ -261,6 +287,13 @@ public partial class SecretViewModel : ReactiveObject
         Secret.Name = Name.Trim();
         Secret.Value = Value;
         IsEditing = false;
+        IsSaved = true;
+    }
+
+    private void Edit()
+    {
+        IsSaved = false;
+        IsEditing = true;
     }
 
     private void Cancel()

@@ -124,7 +124,7 @@ public partial class ProjectsViewModel : ReactiveObject, IHaveHeader, IDisposabl
             list,
             project => project.Id,
             viewModel => viewModel.Project.Id,
-            project => new ProjectViewModel(project, client, Navigator, this, _fileSystemPicker, _dialog),
+            project => new ProjectViewModel(project, client, Navigator, this, _fileSystemPicker, _dialog, notificationService),
             (viewModel, project) => viewModel.ApplyProjectUpdate(project));
 
         foreach (var project in Projects)
@@ -153,7 +153,8 @@ public partial class ProjectViewModel : ReactiveObject
         INavigator navigator,
         ProjectsViewModel parent,
         IFileSystemPicker fileSystemPicker,
-        IDialog dialog)
+        IDialog dialog,
+        INotificationService notificationService)
     {
         Project = project;
         _client = client;
@@ -167,6 +168,10 @@ public partial class ProjectViewModel : ReactiveObject
         ChangeIconCommand = ReactiveCommand.CreateFromTask(ChangeProjectIcon);
         ResetIconCommand = ReactiveCommand.CreateFromTask(ResetProjectIcon);
         DeleteCommand = ReactiveCommand.CreateFromTask(DeleteAsync);
+
+        ChangeIconCommand.ThrownExceptions.NotifyWith(notificationService, "Cannot change project icon");
+        ResetIconCommand.ThrownExceptions.NotifyWith(notificationService, "Cannot reset project icon");
+        DeleteCommand.ThrownExceptions.NotifyWith(notificationService, "Cannot delete project");
     }
 
     public ReactiveCommand<Unit, Unit> OpenCommand { get; }

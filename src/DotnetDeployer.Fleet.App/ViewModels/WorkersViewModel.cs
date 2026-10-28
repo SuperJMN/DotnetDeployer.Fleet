@@ -19,6 +19,7 @@ public partial class WorkersViewModel : ReactiveObject, IHaveHeader, IDisposable
 {
     private readonly IConnectedFleetClientContext clientContext;
     private readonly IDialog _dialog;
+    private readonly INotificationService _notificationService;
     private readonly CompositeDisposable _disposables = [];
 
     [Reactive] private bool _isLoading;
@@ -29,6 +30,7 @@ public partial class WorkersViewModel : ReactiveObject, IHaveHeader, IDisposable
     {
         this.clientContext = clientContext;
         _dialog = dialog;
+        _notificationService = notificationService;
         RefreshCommand = ReactiveCommand.CreateFromTask(LoadAsync);
         RemoveWorkerCommand = ReactiveCommand.CreateFromTask<WorkerItemViewModel, Maybe<Result>>(RemoveAsync);
         _disposables.Add(RefreshCommand.Results().HandleErrorsWith(notificationService, Maybe.From("Cannot load workers")));
@@ -56,7 +58,7 @@ public partial class WorkersViewModel : ReactiveObject, IHaveHeader, IDisposable
                     workers,
                     worker => worker.Id,
                     viewModel => viewModel.Worker.Id,
-                    worker => new WorkerItemViewModel(worker, client, this),
+                    worker => new WorkerItemViewModel(worker, client, this, _notificationService),
                     (viewModel, worker) => viewModel.ApplyWorkerUpdate(worker));
             });
         }
@@ -96,8 +98,9 @@ public partial class WorkerItemViewModel : ReactiveObject
 
     [Reactive] private double _maxDiskUsageGb;
     [Reactive] private bool _isSaving;
+    [Reactive] private bool _isSaved;
 
-    public WorkerItemViewModel(FleetApiClient.WorkerInfo worker, FleetApiClient client, WorkersViewModel parent)
+    public WorkerItemViewModel(FleetApiClient.WorkerInfo worker, FleetApiClient client, WorkersViewModel parent, INotificationService notificationService)
     {
         Worker = worker;
         _client = client;
@@ -105,6 +108,10 @@ public partial class WorkerItemViewModel : ReactiveObject
 
         SaveConfigCommand = ReactiveCommand.CreateFromTask(SaveConfigAsync);
         RemoveCommand = ReactiveCommand.CreateFromObservable(() => parent.RemoveWorkerCommand.Execute(this).Select(_ => Unit.Default));
+
+        SaveConfigCommand.ThrownExceptions.NotifyWith(notificationService, "Cannot save worker settings");
+        // The confirmation belongs to the saved value: editing it again hides it.
+        this.WhenAnyValue(x => x.MaxDiskUsageGb).Skip(1).Subscribe(_ => IsSaved = false);
     }
 
     public ReactiveCommand<System.Reactive.Unit, System.Reactive.Unit> SaveConfigCommand { get; }
@@ -163,11 +170,13 @@ public partial class WorkerItemViewModel : ReactiveObject
     private async Task SaveConfigAsync()
     {
         IsSaving = true;
+        IsSaved = false;
         try
         {
             await _client.UpdateWorkerConfigAsync(Worker.Id, MaxDiskUsageGb);
             Worker = Worker with { MaxDiskUsageGb = MaxDiskUsageGb };
             this.RaisePropertyChanged(nameof(Worker));
+            IsSaved = true;
         }
         finally
         {

@@ -27,7 +27,7 @@ public sealed class DestructiveConfirmationTests
         var api = new RecordingApi();
         var dialog = new ScriptedDialog(confirm: false);
         var vm = new ProjectViewModel(project, api.Client, Substitute.For<INavigator>(), null!,
-            Substitute.For<IFileSystemPicker>(), dialog);
+            Substitute.For<IFileSystemPicker>(), dialog, Substitute.For<INotificationService>());
 
         await vm.DeleteCommand.Execute();
 
@@ -44,7 +44,7 @@ public sealed class DestructiveConfirmationTests
         var parent = new ProjectsViewModel(Substitute.For<IConnectedFleetClientContext>(), Substitute.For<INavigator>(),
             Substitute.For<IFileSystemPicker>(), dialog, Substitute.For<INotificationService>());
         var vm = new ProjectViewModel(project, api.Client, Substitute.For<INavigator>(), parent,
-            Substitute.For<IFileSystemPicker>(), dialog);
+            Substitute.For<IFileSystemPicker>(), dialog, Substitute.For<INotificationService>());
 
         await vm.DeleteCommand.Execute();
 
@@ -189,7 +189,7 @@ public sealed class DestructiveConfirmationTests
     {
         var secrets = new SecretsViewModel(api.Client, Substitute.For<IConnectedFleetClientContext>(),
             Substitute.For<IFileSystemPicker>(), dialog, Substitute.For<INotificationService>());
-        secret = new SecretViewModel(new Secret { Id = Guid.NewGuid(), Name = name, Value = "x" }, api.Client, dialog, secrets);
+        secret = new SecretViewModel(new Secret { Id = Guid.NewGuid(), Name = name, Value = "x" }, api.Client, dialog, Substitute.For<INotificationService>(), secrets);
         secrets.Secrets.Add(secret);
         return secrets;
     }
@@ -198,7 +198,7 @@ public sealed class DestructiveConfirmationTests
     {
         var secrets = new ProjectSecretsViewModel(projectId, "App", api.Client,
             Substitute.For<IConnectedFleetClientContext>(), dialog, Substitute.For<INotificationService>());
-        secret = new ProjectSecretViewModel(new Secret { Id = Guid.NewGuid(), Name = name, Value = "x" }, projectId, api.Client, dialog, secrets);
+        secret = new ProjectSecretViewModel(new Secret { Id = Guid.NewGuid(), Name = name, Value = "x" }, projectId, api.Client, dialog, Substitute.For<INotificationService>(), secrets);
         secrets.Secrets.Add(secret);
         return secrets;
     }
@@ -210,7 +210,7 @@ public sealed class DestructiveConfirmationTests
         var workers = new WorkersViewModel(context, dialog, Substitute.For<INotificationService>());
         var info = new FleetApiClient.WorkerInfo(Guid.NewGuid(), name, status, IsEmbedded: false, LastSeenAt: null,
             MaxDiskUsageGb: 10, RepoStoragePath: null);
-        worker = new WorkerItemViewModel(info, api.Client, workers);
+        worker = new WorkerItemViewModel(info, api.Client, workers, Substitute.For<INotificationService>());
         workers.Workers.Add(worker);
         return workers;
     }

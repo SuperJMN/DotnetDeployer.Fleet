@@ -35,7 +35,8 @@ public sealed class ProjectViewModelIconTests
             Substitute.For<Zafiro.UI.Navigation.INavigator>(),
             null!,
             Substitute.For<Zafiro.UI.IFileSystemPicker>(),
-            Substitute.For<Zafiro.Avalonia.Dialogs.IDialog>());
+            Substitute.For<Zafiro.Avalonia.Dialogs.IDialog>(),
+            Substitute.For<Zafiro.UI.INotificationService>());
 
         await vm.LoadProjectIcon();
 
@@ -55,7 +56,8 @@ public sealed class ProjectViewModelIconTests
             Substitute.For<Zafiro.UI.Navigation.INavigator>(),
             null!,
             Substitute.For<Zafiro.UI.IFileSystemPicker>(),
-            Substitute.For<Zafiro.Avalonia.Dialogs.IDialog>());
+            Substitute.For<Zafiro.Avalonia.Dialogs.IDialog>(),
+            Substitute.For<Zafiro.UI.INotificationService>());
 
         await vm.LoadProjectIcon();
 
@@ -86,7 +88,8 @@ public sealed class ProjectViewModelIconTests
             Substitute.For<Zafiro.UI.Navigation.INavigator>(),
             null!,
             picker,
-            Substitute.For<Zafiro.Avalonia.Dialogs.IDialog>());
+            Substitute.For<Zafiro.Avalonia.Dialogs.IDialog>(),
+            Substitute.For<Zafiro.UI.INotificationService>());
 
         await vm.ChangeProjectIcon();
 

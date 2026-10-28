@@ -18,6 +18,7 @@ public partial class ProjectSecretsViewModel : ReactiveObject, IHaveHeader, IDis
     private readonly FleetApiClient _client;
     private readonly IConnectedFleetClientContext clientContext;
     private readonly IDialog _dialog;
+    private readonly INotificationService _notificationService;
     private readonly Guid _projectId;
     private readonly CompositeDisposable _disposables = [];
 
@@ -40,6 +41,7 @@ public partial class ProjectSecretsViewModel : ReactiveObject, IHaveHeader, IDis
         _client = client;
         this.clientContext = clientContext;
         _dialog = dialog;
+        _notificationService = notificationService;
 
         var canAdd = this.WhenAnyValue(x => x.NewName, x => x.NewValue,
             (n, v) => !string.IsNullOrWhiteSpace(n) && !string.IsNullOrWhiteSpace(v));
@@ -74,7 +76,7 @@ public partial class ProjectSecretsViewModel : ReactiveObject, IHaveHeader, IDis
                     secrets,
                     secret => secret.Id,
                     viewModel => viewModel.Secret.Id,
-                    secret => new ProjectSecretViewModel(secret, _projectId, client, _dialog, this),
+                    secret => new ProjectSecretViewModel(secret, _projectId, client, _dialog, _notificationService, this),
                     (viewModel, secret) => viewModel.ApplySecretUpdate(secret));
             });
         }
@@ -87,7 +89,7 @@ public partial class ProjectSecretsViewModel : ReactiveObject, IHaveHeader, IDis
     private async Task AddAsync()
     {
         var secret = await _client.CreateProjectSecretAsync(_projectId, NewName.Trim(), NewValue);
-        Secrets.Add(new ProjectSecretViewModel(secret, _projectId, _client, _dialog, this));
+        Secrets.Add(new ProjectSecretViewModel(secret, _projectId, _client, _dialog, _notificationService, this));
         NewName = "";
         NewValue = "";
     }
@@ -107,8 +109,9 @@ public partial class ProjectSecretViewModel : ReactiveObject
     [Reactive] private string _name;
     [Reactive] private string _value;
     [Reactive] private bool _isEditing;
+    [Reactive] private bool _isSaved;
 
-    public ProjectSecretViewModel(Secret secret, Guid projectId, FleetApiClient client, IDialog dialog, ProjectSecretsViewModel parent)
+    public ProjectSecretViewModel(Secret secret, Guid projectId, FleetApiClient client, IDialog dialog, INotificationService notificationService, ProjectSecretsViewModel parent)
     {
         Secret = secret;
         _projectId = projectId;
@@ -120,11 +123,11 @@ public partial class ProjectSecretViewModel : ReactiveObject
 
         DeleteCommand = ReactiveCommand.CreateFromTask(DeleteAsync);
         SaveCommand = ReactiveCommand.CreateFromTask(SaveAsync);
-        EditCommand = ReactiveCommand.Create(() => { IsEditing = true; });
+        EditCommand = ReactiveCommand.Create(Edit);
         CancelCommand = ReactiveCommand.Create(Cancel);
 
-        DeleteCommand.ThrownExceptions.Subscribe(_ => { });
-        SaveCommand.ThrownExceptions.Subscribe(_ => { });
+        DeleteCommand.ThrownExceptions.NotifyWith(notificationService, "Cannot delete project secret");
+        SaveCommand.ThrownExceptions.NotifyWith(notificationService, "Cannot save project secret");
     }
 
     public ReactiveCommand<Unit, Unit> DeleteCommand { get; }
@@ -165,6 +168,13 @@ public partial class ProjectSecretViewModel : ReactiveObject
         Secret.Name = Name.Trim();
         Secret.Value = Value;
         IsEditing = false;
+        IsSaved = true;
+    }
+
+    private void Edit()
+    {
+        IsSaved = false;
+        IsEditing = true;
     }
 
     private void Cancel()
