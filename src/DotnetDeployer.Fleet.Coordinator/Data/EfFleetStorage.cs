@@ -34,7 +34,17 @@ public class EfFleetStorage(IDbContextFactory<FleetDbContext> factory, IWorkerSe
     public async Task UpdateProjectAsync(Project project, CancellationToken ct = default)
     {
         await using var db = await factory.CreateDbContextAsync(ct);
-        db.Projects.Update(project);
+        var entry = db.Projects.Update(project);
+
+        // The last-deploy summary is owned by job completion; a project edit made from a
+        // stale read must not roll it back.
+        entry.Property(p => p.LastDeployJobId).IsModified = false;
+        entry.Property(p => p.LastDeployFinishedAt).IsModified = false;
+        entry.Property(p => p.LastDeployStatus).IsModified = false;
+        entry.Property(p => p.LastDeployVersion).IsModified = false;
+        entry.Property(p => p.LastDeployCommitSha).IsModified = false;
+        entry.Property(p => p.LastDeployNuGetVerification).IsModified = false;
+        entry.Property(p => p.LastActivityAt).IsModified = false;
         await db.SaveChangesAsync(ct);
     }
 
@@ -95,6 +105,7 @@ public class EfFleetStorage(IDbContextFactory<FleetDbContext> factory, IWorkerSe
         await using var db = await factory.CreateDbContextAsync(ct);
         db.DeploymentJobs.Update(job);
         await db.SaveChangesAsync(ct);
+        await ProjectDeploySummary.RecordAsync(db, job, ct);
     }
 
     public async Task<int> DeleteFinishedJobsAsync(Guid? projectId, CancellationToken ct = default)
@@ -521,7 +532,10 @@ public class EfFleetStorage(IDbContextFactory<FleetDbContext> factory, IWorkerSe
         }
 
         if (staleJobs.Count > 0)
+        {
             await db.SaveChangesAsync(ct);
+            await RecordProjectSummariesAsync(db, staleJobs, ct);
+        }
 
         return staleJobs.Select(j => j.Id).ToList();
     }
@@ -544,7 +558,10 @@ public class EfFleetStorage(IDbContextFactory<FleetDbContext> factory, IWorkerSe
         }
 
         if (timedOutJobs.Count > 0)
+        {
             await db.SaveChangesAsync(ct);
+            await RecordProjectSummariesAsync(db, timedOutJobs, ct);
+        }
 
         return timedOutJobs.Select(j => j.Id).ToList();
     }
@@ -580,7 +597,14 @@ public class EfFleetStorage(IDbContextFactory<FleetDbContext> factory, IWorkerSe
         }
 
         await db.SaveChangesAsync(ct);
+        await RecordProjectSummariesAsync(db, liveJobs, ct);
         return liveJobs.Select(j => j.Id).ToList();
+    }
+
+    private static async Task RecordProjectSummariesAsync(FleetDbContext db, IEnumerable<DeploymentJob> finishedJobs, CancellationToken ct)
+    {
+        foreach (var job in finishedJobs)
+            await ProjectDeploySummary.RecordAsync(db, job, ct);
     }
 
     public async Task<IReadOnlyList<Guid>> FailStuckAssignedJobsAsync(TimeSpan assignedTimeout, CancellationToken ct = default)
@@ -603,7 +627,10 @@ public class EfFleetStorage(IDbContextFactory<FleetDbContext> factory, IWorkerSe
         }
 
         if (stuckJobs.Count > 0)
+        {
             await db.SaveChangesAsync(ct);
+            await RecordProjectSummariesAsync(db, stuckJobs, ct);
+        }
 
         return stuckJobs.Select(j => j.Id).ToList();
     }
