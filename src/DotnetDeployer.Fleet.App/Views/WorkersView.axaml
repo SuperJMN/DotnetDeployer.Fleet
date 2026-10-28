@@ -96,7 +96,6 @@
                                         <EnhancedButton Grid.Column="1"
                                                         Content="Save"
                                                         Icon="{Icon mdi-content-save}"
-                                                        Classes="Primary"
                                                         Command="{Binding SaveConfigCommand}" />
                                     </Grid>
                                     <StackPanel Orientation="Horizontal" Spacing="4"
