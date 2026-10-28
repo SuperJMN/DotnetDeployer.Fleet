@@ -60,6 +60,7 @@ You now have managed remote execution for DotnetDeployer. Add projects from the 
   - [Security](#security)
 - [Windows Guide](docs/WINDOWS.md)
 - [CLI Reference](#cli-reference)
+- [Client Commands and AI Agents](#client-commands-and-ai-agents)
 - [Configuration](#configuration)
 - [Architecture](#architecture)
 - [Coordinator ↔ Worker Protocol](#coordinator--worker-protocol)
@@ -410,6 +411,7 @@ When total cached repo size exceeds the limit (in GB), the worker automatically 
 | **JWT secret** | Auto-generated on first run, stored in `config.json`. Override: `--jwt-secret <secret>` |
 | **Registration token** | Shared out-of-band with workers. Rotate it by restarting the coordinator with `--token <new-token>` |
 | **Worker auth** | Each worker gets a unique `(id, secret)` pair at registration. The JWT carries a `worker_id` claim, and every endpoint verifies it matches — a stolen token cannot act on behalf of another worker |
+| **Read-only access** | Users with the `Reader` role, and tokens from `fleet tokens create`, can query everything but cannot deploy, change settings or read secret values |
 | **HTTPS** | Use a reverse proxy (nginx, Caddy) to terminate TLS in front of the coordinator |
 
 ### Upgrading
@@ -522,6 +524,108 @@ fleet update [options]                 Update tool + restart local services
 
 ---
 
+## Client Commands and AI Agents
+
+Besides running the coordinator and workers, `fleet` is a client for people and AI agents. Every
+command below works from a terminal, and `fleet mcp` exposes the same operations to MCP clients.
+
+**Connection.** Nothing to configure if the desktop client is signed in: `fleet` reuses its session
+in `~/.config/DotnetFleet/settings.json` (and signs in again with the saved credentials when the
+token expires). Otherwise run `fleet login --url http://coordinator:5000`, or set `FLEET_URL` and
+`FLEET_TOKEN`. `--url` and `--token` override everything.
+
+**Read-only tokens for agents.** An admin or operator runs `fleet tokens create` (read-only by
+default, 90 days, `--days` up to 365, `--write` for a token with your own role) and gives the result
+to the agent as `FLEET_TOKEN`. A read-only token (`Reader` role) can query projects, jobs, logs,
+releases and workers, but cannot deploy, change settings, or read secret values or Git tokens.
+Admins can also create `Reader` users.
+
+**Conventions**
+
+- `--json` prints a stable JSON shape (enums as text: `Succeeded`, `AwaitingNuGetIndex`, `Verified`).
+  The default text output is short and readable. Progress goes to stderr.
+- Projects can be referenced by name, id or Git URL; jobs by full id or a unique id prefix (≥ 4 hex characters).
+- Exit codes: `0` success, `1` job failed (or `projects check` not ready), `2` cancelled,
+  `3` wait timed out, `4` usage, reference, authentication or connection error.
+- Reads have no side effects. Writes say so in their name (`deploy`, `ensure`, `cancel`, `set`, `delete`).
+  Destructive ones (`jobs cancel`, `secrets delete`, replacing a secret) need `--yes`.
+- Secret values are never printed, and never taken as an argument: `--from-env <VAR>` or `--stdin`.
+
+```
+fleet login [--url <url>] [--user <u>] [--password-stdin]   Sign in and remember the session
+fleet status                                                 Reachable? coordinator version, user and role
+fleet tokens create [--write] [--days <n>]                   Issue an API token (read-only by default)
+
+fleet projects list                                          Settings, pinned packages, last deploy, latest job
+fleet projects show <project>                                Full configuration + names of the secrets it gets
+fleet projects ensure --name <n> [--git-url <url>] [--branch <b>] [--poll <min>]
+                      [--tests|--no-tests] [--expect-package <id>]... [--no-expect-packages]
+                                                             Idempotent create or update
+fleet projects check <project>                               Preflight without queueing: one root .sln/.slnx,
+                                                             deployer.yaml, referenced secrets, pinned packages,
+                                                             workers able to build it
+
+fleet deploy <project> [--commit <sha>] [--force]            Queue a deploy; reports instead when that commit
+                                                             already has an active or finished deploy
+fleet jobs list [--project <p>] [--status <s>] [--limit <n>] Worker, commit, version, phase, duration, NuGet
+fleet jobs show <job>                                        Status, phase, worker, error, NuGet state per package
+fleet jobs wait <job> [--until finished|published|verified] [--timeout 30m]
+fleet jobs phases <job>                                      Phases with duration
+fleet jobs failure <job>                                     Failed phase, MSBuild errors with code and project,
+                                                             failed tests with message and stack, suggestions,
+                                                             code vs infrastructure
+fleet jobs cancel <job> --yes
+fleet jobs artifacts <job>
+fleet jobs download <job> <path> [--output <file|dir>]
+fleet logs <job> [--tail <n>] [--since <line>] [--grep <regex>] [--follow]
+                                                             Ends right away unless --follow, even while running
+
+fleet releases <project> [--no-feed]                         Versions Fleet published, job, commit and verification
+                                                             per package; versions on the feed Fleet did not publish
+fleet workers list                                           Status, last heartbeat, version, OS/arch, current job,
+                                                             Android SDK, JDK, workloads, display, free disk
+fleet secrets list [--project <p>]                           Names and scope only
+fleet secrets set <name> [--project <p>] (--from-env <VAR> | --stdin) [--yes]
+fleet secrets delete <name> [--project <p>] --yes
+
+fleet mcp                                                    MCP server over stdio
+```
+
+`--until verified` also waits for the background NuGet verification of the pushed packages;
+`finished` and `published` stop as soon as the job ends (a release job only succeeds once the feed
+accepted every push).
+
+### Typical agent flow
+
+```bash
+fleet projects ensure --name MyLib --git-url https://github.com/me/MyLib --branch master --tests
+fleet projects check MyLib                 # exit 1 → fix what it reports before spending a job
+fleet secrets set NUGET_API_KEY --project MyLib --from-env NUGET_API_KEY
+fleet deploy MyLib --json                  # → { "outcome": "Queued", "job": { "id": … } }
+fleet jobs wait <job> --until verified --timeout 2h
+fleet jobs failure <job>                   # only when the wait exited with 1
+fleet releases MyLib                       # confirm the version is published and verified
+```
+
+### MCP server
+
+`fleet mcp` speaks MCP over stdio with the same connection rules. Register it in an MCP client, for
+example:
+
+```json
+{ "mcpServers": { "fleet": { "command": "fleet", "args": ["mcp"], "env": { "FLEET_TOKEN": "<read-only token>" } } } }
+```
+
+Tools: `list_projects`, `get_project`, `check_project`, `ensure_project`, `enqueue_deploy`,
+`list_jobs`, `get_job`, `get_job_phases`, `wait_for_job` (with progress notifications and a time
+limit), `get_job_failure`, `tail_logs`, `list_job_artifacts`, `cancel_job`, `list_releases`,
+`list_workers`, `list_secrets`, `set_secret` (value read from an environment variable of the server
+process) and `delete_secret`. Queries carry `readOnlyHint`; `cancel_job`, `set_secret` and
+`delete_secret` carry `destructiveHint`. Job logs are also available as the resource
+`fleet://jobs/<id>/logs`.
+
+---
+
 ## Configuration
 
 All settings can be provided via CLI flags, `appsettings.json`, or **environment variables** (using `__` as separator, e.g., `Worker__PollIntervalSeconds=5`).
@@ -630,10 +734,17 @@ All worker traffic flows over plain HTTP/JSON. There is no direct DB or queue ac
 | Method | Path | Auth | Description |
 |---|---|---|---|
 | `POST` | `/api/auth/login` | anonymous | Obtain User JWT |
-| `GET` / `POST` / `DELETE` | `/api/projects[/...]` | User | CRUD projects |
-| `POST` | `/api/projects/{id}/deploy` | User | Trigger deploy |
+| `POST` | `/api/auth/tokens` | Admin / Operator | Issue a long-lived API token (`Reader` unless `readOnly: false`) |
+| `GET` | `/api/projects[/...]` | User | Read projects (Git token hidden from readers) |
+| `POST` / `PUT` / `DELETE` | `/api/projects[/...]` | Admin / Operator | Create, update, delete projects |
+| `POST` | `/api/projects/{id}/deploy` | Admin / Operator | Trigger deploy (`force: true` skips reuse of an active deploy) |
+| `GET` | `/api/projects/{id}/head` | User | Latest commit of the tracked branch |
+| `GET` | `/api/projects/{id}/preflight` | User | Check the project without queueing a job |
+| `GET` | `/api/projects/{id}/releases` | User | NuGet releases with per-package state |
 | `GET` | `/api/jobs/{id}/logs` | User | Live log stream (SSE) |
-| `GET` | `/api/workers` | Admin | List workers |
+| `GET` | `/api/jobs/{id}/log-lines?since=&tail=` | User | Finite log snapshot with line numbers |
+| `POST` | `/api/jobs/{id}/cancel` | Admin / Operator | Cancel a job |
+| `GET` | `/api/workers` | User | List workers with their build environment |
 | `PUT` | `/api/workers/{id}/config` | Admin | Update worker config |
 | `DELETE` | `/api/workers/{id}` | Admin | Unregister worker |
 | `POST` | `/api/workers/register` | RegistrationToken / Admin | Worker self-registration |

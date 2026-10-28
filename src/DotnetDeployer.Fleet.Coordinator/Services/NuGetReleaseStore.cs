@@ -27,6 +27,31 @@ public sealed class NuGetReleaseStore(string rootDirectory)
         return new(manifest, progress);
     }
 
+    /// <summary>Every release prepared for a project, newest first. Survives clearing finished jobs.</summary>
+    public async Task<IReadOnlyList<NuGetReleaseSnapshot>> ListAsync(Guid projectId, CancellationToken ct = default)
+    {
+        var projectDir = Path.Combine(root, projectId.ToString("N"));
+        if (!Directory.Exists(projectDir)) return [];
+
+        var snapshots = new List<NuGetReleaseSnapshot>();
+        foreach (var commitDir in Directory.EnumerateDirectories(projectDir))
+        {
+            var commitSha = Path.GetFileName(commitDir);
+            if (commitSha.Length != 40 || !commitSha.All(Uri.IsHexDigit)) continue;
+            try
+            {
+                if (await GetAsync(projectId, commitSha, ct) is { } snapshot)
+                    snapshots.Add(snapshot);
+            }
+            catch (Exception ex) when (ex is InvalidDataException or JsonException)
+            {
+                // A damaged release record must not hide the others.
+            }
+        }
+
+        return snapshots.OrderByDescending(s => s.Manifest.PreparedAt).ToList();
+    }
+
     public async Task UploadPackageAsync(Guid projectId, string commitSha, string packageId, Stream content, CancellationToken ct = default)
     {
         var dir = DirectoryFor(projectId, commitSha);

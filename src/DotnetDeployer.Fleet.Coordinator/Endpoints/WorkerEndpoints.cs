@@ -15,7 +15,8 @@ public static class WorkerEndpoints
         var group = app.MapGroup("/api/workers");
 
         // Admin-only management
-        group.MapGet("/", GetAll).RequireAuthorization("Admin");
+        // Readable by any person or agent, so a failure can be traced to the worker's environment.
+        group.MapGet("/", GetAll).RequireAuthorization(AccessPolicies.User);
         group.MapPut("/{id:guid}/config", UpdateConfig).RequireAuthorization("Admin");
         group.MapDelete("/{id:guid}", Delete).RequireAuthorization("Admin");
 
@@ -62,7 +63,8 @@ public static class WorkerEndpoints
                 w.Architecture,
                 w.CpuModel,
                 CurrentJobId: running?.Id,
-                CurrentJobProjectName: running is null ? null : projectNames.GetValueOrDefault(running.ProjectId)));
+                CurrentJobProjectName: running is null ? null : projectNames.GetValueOrDefault(running.ProjectId),
+                Environment: w.Environment));
         }
 
         return Results.Ok(summaries);
@@ -146,6 +148,8 @@ public static class WorkerEndpoints
             worker.Architecture = req.Architecture;
         if (!string.IsNullOrWhiteSpace(req?.CpuModel))
             worker.CpuModel = req.CpuModel;
+        if (req?.Environment is not null)
+            worker.Environment = req.Environment with { ReportedAt = DateTimeOffset.UtcNow };
         await storage.UpdateWorkerAsync(worker);
         return Results.Ok();
     }
@@ -295,7 +299,8 @@ public static class WorkerEndpoints
         string? Architecture,
         string? CpuModel,
         Guid? CurrentJobId,
-        string? CurrentJobProjectName);
+        string? CurrentJobProjectName,
+        WorkerEnvironment? Environment);
     public record UpdateWorkerConfigRequest(double? MaxDiskUsageGb, string? RepoStoragePath);
     public record WorkerLoginRequest(Guid WorkerId, string Secret);
     public record UpdateWorkerStatusRequest(WorkerStatus Status);
@@ -305,5 +310,6 @@ public static class WorkerEndpoints
         long? TotalMemoryMb = null,
         string? OperatingSystem = null,
         string? Architecture = null,
-        string? CpuModel = null);
+        string? CpuModel = null,
+        WorkerEnvironment? Environment = null);
 }

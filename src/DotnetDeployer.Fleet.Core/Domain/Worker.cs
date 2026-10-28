@@ -43,4 +43,7 @@ public class Worker
 
     /// <summary>Optional human-readable CPU model name.</summary>
     public string? CpuModel { get; set; }
+
+    /// <summary>Build environment (Android SDK, JDK, workloads, display, disk) reported on heartbeat.</summary>
+    public WorkerEnvironment? Environment { get; set; }
 }

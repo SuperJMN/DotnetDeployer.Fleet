@@ -1,4 +1,6 @@
+using DotnetDeployer.Fleet.Coordinator.Auth;
 using DotnetDeployer.Fleet.Coordinator.Services;
+using DotnetDeployer.Fleet.Core.Api;
 using DotnetDeployer.Fleet.Core.Domain;
 using DotnetDeployer.Fleet.Core.Interfaces;
 using Microsoft.AspNetCore.Mvc;
@@ -17,12 +19,13 @@ public static class JobEndpoints
         group.MapGet("/", GetAll);
         group.MapGet("/{id:guid}", GetById);
         group.MapGet("/{id:guid}/logs", StreamLogs);
+        group.MapGet("/{id:guid}/log-lines", GetLogLines);
         group.MapGet("/{id:guid}/phases", GetPhases);
         group.MapGet("/{id:guid}/artifacts", GetArtifacts);
         group.MapGet("/{id:guid}/artifacts/{*relativePath}", DownloadArtifact);
         group.MapGet("/{id:guid}/nuget-release", GetNuGetReleaseForAdmin).RequireAuthorization("Admin");
-        group.MapDelete("/finished", DeleteFinishedJobs);
-        group.MapPost("/{id:guid}/cancel", CancelJob);
+        group.MapDelete("/finished", DeleteFinishedJobs).RequireAuthorization(AccessPolicies.Write);
+        group.MapPost("/{id:guid}/cancel", CancelJob).RequireAuthorization(AccessPolicies.Write);
 
         // Worker internal endpoints (authenticated by worker secret header)
         var workerGroup = app.MapGroup("/api/queue").AddEndpointFilter<WorkerLivenessFilter>();
@@ -54,6 +57,19 @@ public static class JobEndpoints
     {
         var job = await storage.GetJobAsync(id);
         return job is null ? Results.NotFound() : Results.Ok(job);
+    }
+
+    /// <summary>
+    /// Finite snapshot of a job's stored log, for clients that must not hang on the SSE stream
+    /// while the job is still running.
+    /// </summary>
+    private static async Task<IResult> GetLogLines(Guid id, int? since, int? tail, IFleetStorage storage, CancellationToken ct)
+    {
+        var job = await storage.GetJobAsync(id, ct);
+        if (job is null) return Results.NotFound();
+
+        var entries = await storage.GetLogsAsync(id, ct);
+        return Results.Ok(JobLogPage.From(id, job.Status, entries, since, tail));
     }
 
     private static async Task<IResult> GetNuGetReleaseForAdmin(Guid id, IFleetStorage storage, NuGetReleaseStore releases)

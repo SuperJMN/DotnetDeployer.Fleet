@@ -90,7 +90,11 @@ public static class CoordinatorHostBuilder
 
         builder.Services.AddAuthorizationBuilder()
             .AddPolicy("Admin", policy => policy.RequireRole("Admin"))
-            .AddPolicy("Worker", policy => policy.RequireRole("Worker"));
+            .AddPolicy("Worker", policy => policy.RequireRole("Worker"))
+            .AddPolicy(AccessPolicies.Write, policy => policy.RequireRole(
+                nameof(UserRole.Admin), nameof(UserRole.Operator)))
+            .AddPolicy(AccessPolicies.User, policy => policy.RequireRole(
+                nameof(UserRole.Admin), nameof(UserRole.Operator), nameof(UserRole.Reader)));
 
         // ── Services ─────────────────────────────────────────────────────────
         builder.Services.AddSingleton<LogBroadcaster>();
@@ -104,6 +108,7 @@ public static class CoordinatorHostBuilder
                 builder.Configuration["ProjectIcons:RootDir"] ?? "project-icons",
                 sp.GetRequiredService<ILogger<ProjectIconStore>>()));
         builder.Services.AddSingleton<PackageProjectDiscovery>();
+        builder.Services.AddSingleton<ProjectPreflight>();
         builder.Services.AddSingleton<IGitCommitResolver, GitCommitResolver>();
         builder.Services.AddSingleton<Endpoints.WorkerLivenessFilter>();
         builder.Services.AddSingleton<JobAssignmentSignal>();
@@ -210,6 +215,7 @@ public static class CoordinatorHostBuilder
         await EnsureWorkerColumnAsync(db, "OperatingSystem", "TEXT NULL");
         await EnsureWorkerColumnAsync(db, "Architecture", "TEXT NULL");
         await EnsureWorkerColumnAsync(db, "CpuModel", "TEXT NULL");
+        await EnsureWorkerColumnAsync(db, "Environment", "TEXT NULL");
 
         var hasJobVersion = (await db.Database
             .SqlQueryRaw<long>("SELECT COUNT(*) AS \"Value\" FROM pragma_table_info('DeploymentJobs') WHERE name='Version'")

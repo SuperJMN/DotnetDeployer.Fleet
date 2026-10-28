@@ -1,3 +1,5 @@
+using DotnetDeployer.Fleet.Coordinator.Auth;
+using DotnetDeployer.Fleet.Core.Api;
 using DotnetDeployer.Fleet.Core.Domain;
 using DotnetDeployer.Fleet.Core.Interfaces;
 using DotnetDeployer.Fleet.Coordinator.Services;
@@ -14,28 +16,82 @@ public static class ProjectEndpoints
         group.MapGet("/", GetAll);
         group.MapGet("/{id:guid}", GetById);
         group.MapGet("/{id:guid}/icon", GetIcon);
-        group.MapPut("/{id:guid}/icon", SetIcon);
-        group.MapDelete("/{id:guid}/icon", ResetIcon);
-        group.MapPost("/", Create);
-        group.MapPut("/{id:guid}", Update);
-        group.MapDelete("/{id:guid}", Delete);
-        group.MapPost("/{id:guid}/deploy", EnqueueDeploy);
-        group.MapPost("/{id:guid}/packages", EnqueuePackageBuild);
+        group.MapPut("/{id:guid}/icon", SetIcon).RequireAuthorization(AccessPolicies.Write);
+        group.MapDelete("/{id:guid}/icon", ResetIcon).RequireAuthorization(AccessPolicies.Write);
+        group.MapPost("/", Create).RequireAuthorization(AccessPolicies.Write);
+        group.MapPut("/{id:guid}", Update).RequireAuthorization(AccessPolicies.Write);
+        group.MapDelete("/{id:guid}", Delete).RequireAuthorization(AccessPolicies.Write);
+        group.MapPost("/{id:guid}/deploy", EnqueueDeploy).RequireAuthorization(AccessPolicies.Write);
+        group.MapPost("/{id:guid}/packages", EnqueuePackageBuild).RequireAuthorization(AccessPolicies.Write);
         group.MapGet("/{id:guid}/package-projects", GetPackageProjects);
         group.MapGet("/{id:guid}/jobs", GetJobsForProject);
-        group.MapDelete("/{id:guid}/jobs/finished", DeleteFinishedJobs);
+        group.MapDelete("/{id:guid}/jobs/finished", DeleteFinishedJobs).RequireAuthorization(AccessPolicies.Write);
+        group.MapGet("/{id:guid}/head", GetHead).RequireAuthorization(AccessPolicies.User);
+        group.MapGet("/{id:guid}/preflight", GetPreflight).RequireAuthorization(AccessPolicies.User);
+        group.MapGet("/{id:guid}/releases", GetReleases).RequireAuthorization(AccessPolicies.User);
     }
 
-    private static async Task<IResult> GetAll(IFleetStorage storage)
+    private static async Task<IResult> GetAll(IFleetStorage storage, HttpContext httpContext)
     {
         var projects = await storage.GetProjectsAsync();
-        return Results.Ok(projects);
+        return Results.Ok(projects.Select(p => AccessPolicies.RedactFor(httpContext.User, p)));
     }
 
-    private static async Task<IResult> GetById(Guid id, IFleetStorage storage)
+    private static async Task<IResult> GetById(Guid id, IFleetStorage storage, HttpContext httpContext)
     {
         var project = await storage.GetProjectAsync(id);
-        return project is null ? Results.NotFound() : Results.Ok(project);
+        return project is null ? Results.NotFound() : Results.Ok(AccessPolicies.RedactFor(httpContext.User, project));
+    }
+
+    private static async Task<IResult> GetHead(
+        Guid id,
+        IFleetStorage storage,
+        IGitCommitResolver commitResolver,
+        HttpContext httpContext)
+    {
+        var project = await storage.GetProjectAsync(id);
+        if (project is null)
+            return Results.NotFound();
+
+        var sha = await commitResolver.ResolveLatestShaAsync(project.GitUrl, project.Branch, project.GitToken, httpContext.RequestAborted);
+        return string.IsNullOrWhiteSpace(sha)
+            ? Results.BadRequest(new { error = $"Could not resolve a complete Git commit SHA for branch '{project.Branch}'." })
+            : Results.Ok(new ProjectHead(project.Branch, sha));
+    }
+
+    private static async Task<IResult> GetPreflight(
+        Guid id,
+        IFleetStorage storage,
+        ProjectPreflight preflight,
+        HttpContext httpContext)
+    {
+        var project = await storage.GetProjectAsync(id);
+        if (project is null)
+            return Results.NotFound();
+
+        try
+        {
+            return Results.Ok(await preflight.RunAsync(project, httpContext.RequestAborted));
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            return Results.BadRequest(new { error = ex.Message });
+        }
+    }
+
+    internal static async Task<IResult> GetReleases(
+        Guid id,
+        IFleetStorage storage,
+        NuGetReleaseStore releases,
+        HttpContext httpContext)
+    {
+        var project = await storage.GetProjectAsync(id);
+        if (project is null)
+            return Results.NotFound();
+
+        var snapshots = await releases.ListAsync(id, httpContext.RequestAborted);
+        var jobs = await storage.GetJobsByProjectAsync(id);
+        return Results.Ok(ProjectReleases.Build(snapshots, jobs));
     }
 
     private static async Task<IResult> GetIcon(Guid id, IFleetStorage storage, ProjectIconStore icons, HttpContext httpContext)
@@ -152,10 +208,13 @@ public static class ProjectEndpoints
         if (string.IsNullOrWhiteSpace(sha))
             return Results.BadRequest(new { error = $"Could not resolve a complete Git commit SHA for branch '{project.Branch}'." });
 
-        var active = (await storage.GetJobsByProjectAsync(id))
-            .FirstOrDefault(j => j.Kind == JobKind.Deploy
-                && string.Equals(j.TriggerCommitSha, sha, StringComparison.OrdinalIgnoreCase)
-                && j.Status is (JobStatus.Queued or JobStatus.Assigned or JobStatus.Running or JobStatus.AwaitingNuGetIndex));
+        // Reuse a deploy already in flight for the same commit, unless the caller forces a new one.
+        var active = req?.Force == true
+            ? null
+            : (await storage.GetJobsByProjectAsync(id))
+                .FirstOrDefault(j => j.Kind == JobKind.Deploy
+                    && string.Equals(j.TriggerCommitSha, sha, StringComparison.OrdinalIgnoreCase)
+                    && j.Status is (JobStatus.Queued or JobStatus.Assigned or JobStatus.Running or JobStatus.AwaitingNuGetIndex));
         if (active is not null)
             return Results.Ok(active);
 
@@ -314,7 +373,7 @@ public static class ProjectEndpoints
         }
     }
 
-    public record EnqueueDeployRequest(string? CommitSha = null);
+    public record EnqueueDeployRequest(string? CommitSha = null, bool Force = false);
 
     public record CreateProjectRequest(
         string Name,

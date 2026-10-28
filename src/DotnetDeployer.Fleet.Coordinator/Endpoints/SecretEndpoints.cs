@@ -1,3 +1,4 @@
+using DotnetDeployer.Fleet.Coordinator.Auth;
 using DotnetDeployer.Fleet.Core.Domain;
 using DotnetDeployer.Fleet.Core.Interfaces;
 using Microsoft.AspNetCore.Mvc;
@@ -11,24 +12,24 @@ public static class SecretEndpoints
         // Global secrets
         var globals = app.MapGroup("/api/secrets").RequireAuthorization();
         globals.MapGet("/", GetGlobals);
-        globals.MapPost("/", CreateGlobal);
-        globals.MapPut("/{id:guid}", UpdateGlobal);
-        globals.MapDelete("/{id:guid}", DeleteGlobal);
+        globals.MapPost("/", CreateGlobal).RequireAuthorization(AccessPolicies.Write);
+        globals.MapPut("/{id:guid}", UpdateGlobal).RequireAuthorization(AccessPolicies.Write);
+        globals.MapDelete("/{id:guid}", DeleteGlobal).RequireAuthorization(AccessPolicies.Write);
 
         // Per-project secrets (nested under /api/projects/{projectId}/secrets)
         var perProject = app.MapGroup("/api/projects/{projectId:guid}/secrets").RequireAuthorization();
         perProject.MapGet("/", GetByProject);
-        perProject.MapPost("/", CreateForProject);
-        perProject.MapPut("/{id:guid}", UpdateForProject);
-        perProject.MapDelete("/{id:guid}", DeleteForProject);
+        perProject.MapPost("/", CreateForProject).RequireAuthorization(AccessPolicies.Write);
+        perProject.MapPut("/{id:guid}", UpdateForProject).RequireAuthorization(AccessPolicies.Write);
+        perProject.MapDelete("/{id:guid}", DeleteForProject).RequireAuthorization(AccessPolicies.Write);
     }
 
     // ── Global ────────────────────────────────────────────────────────────────
 
-    private static async Task<IResult> GetGlobals(IFleetStorage storage)
+    private static async Task<IResult> GetGlobals(IFleetStorage storage, HttpContext httpContext)
     {
         var secrets = await storage.GetSecretsAsync(null);
-        return Results.Ok(secrets);
+        return Results.Ok(secrets.Select(s => AccessPolicies.RedactFor(httpContext.User, s)));
     }
 
     private static async Task<IResult> CreateGlobal([FromBody] SecretRequest req, IFleetStorage storage)
@@ -59,10 +60,10 @@ public static class SecretEndpoints
 
     // ── Per-project ───────────────────────────────────────────────────────────
 
-    private static async Task<IResult> GetByProject(Guid projectId, IFleetStorage storage)
+    private static async Task<IResult> GetByProject(Guid projectId, IFleetStorage storage, HttpContext httpContext)
     {
         var secrets = await storage.GetSecretsAsync(projectId);
-        return Results.Ok(secrets);
+        return Results.Ok(secrets.Select(s => AccessPolicies.RedactFor(httpContext.User, s)));
     }
 
     private static async Task<IResult> CreateForProject(Guid projectId, [FromBody] SecretRequest req, IFleetStorage storage)

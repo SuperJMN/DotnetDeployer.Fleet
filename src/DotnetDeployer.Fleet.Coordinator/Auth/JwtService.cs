@@ -33,6 +33,24 @@ public class JwtService
     }
 
     /// <summary>
+    /// Issues a long-lived API token for scripts and agents on behalf of a signed-in user. The
+    /// role is passed explicitly so a user can hand out less access than they have (a
+    /// <see cref="UserRole.Reader"/> token), never more.
+    /// </summary>
+    public (string Token, DateTimeOffset ExpiresAt) GenerateApiToken(string userId, string username, UserRole role, TimeSpan lifetime)
+    {
+        var claims = new[]
+        {
+            new Claim(ClaimTypes.NameIdentifier, userId),
+            new Claim(ClaimTypes.Name, username),
+            new Claim(ClaimTypes.Role, role.ToString()),
+            new Claim("token_kind", "api")
+        };
+        var expiresAt = DateTimeOffset.UtcNow.Add(lifetime);
+        return (WriteToken(claims, lifetime), expiresAt);
+    }
+
+    /// <summary>
     /// Issues a JWT for a worker. The token carries <c>Role=Worker</c> and a
     /// <c>worker_id</c> claim used by endpoints to authorize per-worker actions.
     /// </summary>

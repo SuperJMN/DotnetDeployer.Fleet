@@ -57,6 +57,10 @@ public class FleetDbContext : DbContext
         {
             e.HasKey(w => w.Id);
             e.HasIndex(w => w.Name).IsUnique();
+            e.Property(w => w.Environment)
+                .HasConversion(
+                    v => v == null ? null : JsonSerializer.Serialize(v, (JsonSerializerOptions?)null),
+                    v => string.IsNullOrEmpty(v) ? null : JsonSerializer.Deserialize<WorkerEnvironment>(v, (JsonSerializerOptions?)null));
         });
 
         modelBuilder.Entity<RepoCache>(e =>

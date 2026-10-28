@@ -5,6 +5,7 @@ using System.Reactive.Linq;
 using System.Reactive.Subjects;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using DotnetDeployer.Fleet.Core.Api;
 using DotnetDeployer.Fleet.Core.Domain;
 
 namespace DotnetDeployer.Fleet.Api.Client;
@@ -124,6 +125,24 @@ public class FleetApiClient
         return await response.Content.ReadFromJsonAsync<SessionResponse>(JsonOptions);
     }
 
+    /// <summary>Issues a long-lived API token (read-only unless <paramref name="readOnly"/> is false).</summary>
+    public async Task<ApiTokenResponse> CreateApiTokenAsync(bool readOnly = true, int? days = null, CancellationToken ct = default)
+    {
+        using var response = await http.PostAsJsonAsync("/api/auth/tokens", new CreateApiTokenRequest(readOnly, days), JsonOptions, ct);
+        response.EnsureSuccessStatusCode();
+        return (await response.Content.ReadFromJsonAsync<ApiTokenResponse>(JsonOptions, ct))!;
+    }
+
+    /// <summary>Anonymous health probe: coordinator version and uptime.</summary>
+    public async Task<HealthResponse?> GetHealthAsync(CancellationToken ct = default)
+    {
+        using var response = await http.GetAsync("/health", ct);
+        response.EnsureSuccessStatusCode();
+        return await response.Content.ReadFromJsonAsync<HealthResponse>(JsonOptions, ct);
+    }
+
+    public record HealthResponse(string Status, string Service, string Version, long UptimeSeconds, DateTimeOffset ServerTime);
+
     // ── Projects ──────────────────────────────────────────────────────────────
 
     public async Task<List<Project>> GetProjectsAsync() =>
@@ -206,6 +225,40 @@ public class FleetApiClient
         return (await response.Content.ReadFromJsonAsync<DeploymentJob>(JsonOptions))!;
     }
 
+    /// <summary>
+    /// Queues a deploy and tells whether the coordinator created a new job or reused one already in
+    /// flight for the same commit. <paramref name="force"/> always creates a new job.
+    /// </summary>
+    public async Task<EnqueueDeployResult> EnqueueDeployAsync(Guid projectId, string? commitSha, bool force, CancellationToken ct = default)
+    {
+        using var response = await http.PostAsJsonAsync($"/api/projects/{projectId}/deploy", new { commitSha, force }, JsonOptions, ct);
+        await EnsureSuccessWithErrorAsync(response, ct);
+        var job = (await response.Content.ReadFromJsonAsync<DeploymentJob>(JsonOptions, ct))!;
+        return new EnqueueDeployResult(job, response.StatusCode == HttpStatusCode.Created);
+    }
+
+    public record EnqueueDeployResult(DeploymentJob Job, bool Created);
+
+    /// <summary>Latest commit of the project's tracked branch, resolved by the coordinator.</summary>
+    public async Task<ProjectHead> GetProjectHeadAsync(Guid projectId, CancellationToken ct = default)
+    {
+        using var response = await http.GetAsync($"/api/projects/{projectId}/head", ct);
+        await EnsureSuccessWithErrorAsync(response, ct);
+        return (await response.Content.ReadFromJsonAsync<ProjectHead>(JsonOptions, ct))!;
+    }
+
+    /// <summary>Checks the project against Fleet's requirements without queueing anything.</summary>
+    public async Task<ProjectPreflightReport> GetProjectPreflightAsync(Guid projectId, CancellationToken ct = default)
+    {
+        using var response = await streamingHttp.GetAsync($"/api/projects/{projectId}/preflight", ct);
+        await EnsureSuccessWithErrorAsync(response, ct);
+        return (await response.Content.ReadFromJsonAsync<ProjectPreflightReport>(JsonOptions, ct))!;
+    }
+
+    /// <summary>NuGet releases Fleet prepared for the project, newest first.</summary>
+    public async Task<List<ProjectRelease>> GetProjectReleasesAsync(Guid projectId, CancellationToken ct = default) =>
+        await http.GetFromJsonAsync<List<ProjectRelease>>($"/api/projects/{projectId}/releases", JsonOptions, ct) ?? [];
+
     public async Task<DeploymentJob> EnqueuePackageBuildAsync(Guid projectId, PackageBuildRequest request)
     {
         var response = await http.PostAsJsonAsync($"/api/projects/{projectId}/packages", request, JsonOptions);
@@ -262,6 +315,21 @@ public class FleetApiClient
     /// </summary>
     public async Task<List<JobPhase>> GetJobPhasesAsync(Guid id) =>
         await http.GetFromJsonAsync<List<JobPhase>>($"/api/jobs/{id}/phases", JsonOptions) ?? [];
+
+    /// <summary>
+    /// Finite snapshot of a job's stored log. Unlike <see cref="StreamJobLogsAsync"/> it always
+    /// returns, also while the job is running.
+    /// </summary>
+    public async Task<JobLogPage> GetJobLogLinesAsync(Guid id, int? since = null, int? tail = null, CancellationToken ct = default)
+    {
+        var query = new List<string>();
+        if (since is not null) query.Add($"since={since}");
+        if (tail is not null) query.Add($"tail={tail}");
+        var url = $"/api/jobs/{id}/log-lines" + (query.Count == 0 ? "" : "?" + string.Join("&", query));
+        using var response = await streamingHttp.GetAsync(url, ct);
+        await EnsureSuccessWithErrorAsync(response, ct);
+        return (await response.Content.ReadFromJsonAsync<JobLogPage>(JsonOptions, ct))!;
+    }
 
     public async Task<List<PackageArtifact>> GetJobArtifactsAsync(Guid id) =>
         await http.GetFromJsonAsync<List<PackageArtifact>>($"/api/jobs/{id}/artifacts", JsonOptions) ?? [];
@@ -404,6 +472,37 @@ public class FleetApiClient
         return await http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, linked.Token);
     }
 
+    /// <summary>
+    /// Like <see cref="HttpResponseMessage.EnsureSuccessStatusCode"/>, but keeps the coordinator's
+    /// <c>{ "error": "…" }</c> message so callers can show why a request was rejected.
+    /// </summary>
+    private static async Task EnsureSuccessWithErrorAsync(HttpResponseMessage response, CancellationToken ct)
+    {
+        if (response.IsSuccessStatusCode)
+            return;
+
+        string? detail = null;
+        try
+        {
+            var body = await response.Content.ReadAsStringAsync(ct);
+            if (!string.IsNullOrWhiteSpace(body))
+            {
+                using var document = JsonDocument.Parse(body);
+                if (document.RootElement.ValueKind == JsonValueKind.Object
+                    && (document.RootElement.TryGetProperty("error", out var error)
+                        || document.RootElement.TryGetProperty("message", out error)))
+                    detail = error.GetString();
+            }
+        }
+        catch (JsonException)
+        {
+        }
+
+        var message = $"Response status code does not indicate success: {(int)response.StatusCode} ({response.ReasonPhrase})."
+                      + (string.IsNullOrWhiteSpace(detail) ? "" : " " + detail);
+        throw new HttpRequestException(message, null, response.StatusCode);
+    }
+
     private static string EscapeRelativePath(string relativePath) =>
         string.Join('/',
             relativePath.Replace('\\', '/')
@@ -446,7 +545,8 @@ public class FleetApiClient
         string? Architecture = null,
         string? CpuModel = null,
         Guid? CurrentJobId = null,
-        string? CurrentJobProjectName = null);
+        string? CurrentJobProjectName = null,
+        WorkerEnvironment? Environment = null);
 
     // ── Secrets ───────────────────────────────────────────────────────────────
 
