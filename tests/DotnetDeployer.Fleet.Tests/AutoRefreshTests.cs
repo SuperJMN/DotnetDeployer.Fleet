@@ -99,7 +99,7 @@ public sealed class AutoRefreshTests
         var scheduler = new TestScheduler();
         using var vm = new ProjectDetailViewModel(project, coordinator.Client, Connected(coordinator.Client),
             Substitute.For<INavigator>(), Substitute.For<IFileSystemPicker>(), Substitute.For<IDialog>(),
-            Substitute.For<INotificationService>(), scheduler);
+            Substitute.For<INotificationService>(), new InMemoryPackageTargetSelectionStore(), scheduler);
         await vm.RefreshCommand.Execute().FirstAsync();
         await vm.AutoRefresh.StartCommand.Execute().FirstAsync();
 
