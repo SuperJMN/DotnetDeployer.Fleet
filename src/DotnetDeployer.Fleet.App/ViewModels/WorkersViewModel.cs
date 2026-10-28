@@ -1,6 +1,7 @@
 using System.Collections.ObjectModel;
 using System.Globalization;
 using System.Reactive;
+using System.Reactive.Concurrency;
 using System.Reactive.Disposables;
 using System.Reactive.Linq;
 using CSharpFunctionalExtensions;
@@ -21,12 +22,17 @@ public partial class WorkersViewModel : ReactiveObject, IHaveHeader, IDisposable
     private readonly IDialog _dialog;
     private readonly INotificationService _notificationService;
     private readonly CompositeDisposable _disposables = [];
+    private FleetApiClient? _loadedClient;
 
     [Reactive] private bool _isLoading;
 
     public ObservableCollection<WorkerItemViewModel> Workers { get; } = [];
 
-    public WorkersViewModel(IConnectedFleetClientContext clientContext, IDialog dialog, INotificationService notificationService)
+    public WorkersViewModel(
+        IConnectedFleetClientContext clientContext,
+        IDialog dialog,
+        INotificationService notificationService,
+        IScheduler? autoRefreshScheduler = null)
     {
         this.clientContext = clientContext;
         _dialog = dialog;
@@ -35,6 +41,8 @@ public partial class WorkersViewModel : ReactiveObject, IHaveHeader, IDisposable
         RemoveWorkerCommand = ReactiveCommand.CreateFromTask<WorkerItemViewModel, Maybe<Result>>(RemoveAsync);
         _disposables.Add(RefreshCommand.Results().HandleErrorsWith(notificationService, Maybe.From("Cannot load workers")));
         _disposables.Add(RemoveWorkerCommand.Results().HandleErrorsWith(notificationService, Maybe.From("Cannot remove worker")));
+        AutoRefresh = new AutoRefresh(RefreshInBackground, autoRefreshScheduler);
+        _disposables.Add(AutoRefresh);
 
         Header = Observable.Return<object>(new SectionHeader("Workers",
             new HeaderAction("Refresh", "mdi-refresh", RefreshCommand)));
@@ -42,6 +50,7 @@ public partial class WorkersViewModel : ReactiveObject, IHaveHeader, IDisposable
 
     public ReactiveCommand<Unit, Maybe<Result>> RefreshCommand { get; }
     public ReactiveCommand<WorkerItemViewModel, Maybe<Result>> RemoveWorkerCommand { get; }
+    public AutoRefresh AutoRefresh { get; }
     public IObservable<object> Header { get; }
     public void Dispose() => _disposables.Dispose();
 
@@ -52,20 +61,35 @@ public partial class WorkersViewModel : ReactiveObject, IHaveHeader, IDisposable
         {
             return await clientContext.Require().Bind(async client =>
             {
-                var workers = await client.GetWorkersAsync();
-                ObservableCollectionSync.Sync(
-                    Workers,
-                    workers,
-                    worker => worker.Id,
-                    viewModel => viewModel.Worker.Id,
-                    worker => new WorkerItemViewModel(worker, client, this, _notificationService),
-                    (viewModel, worker) => viewModel.ApplyWorkerUpdate(worker));
+                await SyncWorkers(client);
+                _loadedClient = client;
             });
         }
         finally
         {
             IsLoading = false;
         }
+    }
+
+    private async Task RefreshInBackground()
+    {
+        // Only once a load has connected; a background tick must never prompt for a connection.
+        if (IsLoading || _loadedClient is not { } client)
+            return;
+
+        await SyncWorkers(client);
+    }
+
+    private async Task SyncWorkers(FleetApiClient client)
+    {
+        var workers = await client.GetWorkersAsync();
+        ObservableCollectionSync.Sync(
+            Workers,
+            workers,
+            worker => worker.Id,
+            viewModel => viewModel.Worker.Id,
+            worker => new WorkerItemViewModel(worker, client, this, _notificationService),
+            (viewModel, worker) => viewModel.ApplyWorkerUpdate(worker));
     }
 
     private async Task<Maybe<Result>> RemoveAsync(WorkerItemViewModel item)

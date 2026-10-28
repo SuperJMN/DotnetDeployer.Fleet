@@ -1,5 +1,7 @@
+using System.Collections.Concurrent;
 using System.Collections.ObjectModel;
 using System.Reactive;
+using System.Reactive.Concurrency;
 using System.Reactive.Disposables;
 using System.Reactive.Linq;
 using CSharpFunctionalExtensions;
@@ -23,6 +25,8 @@ public partial class BuildsViewModel : ReactiveObject, IHaveHeader, IDisposable
     private readonly IDialog dialog;
     private readonly INotificationService notificationService;
     private readonly CompositeDisposable disposables = [];
+    private readonly ConcurrentDictionary<Guid, byte[]?> projectIcons = new();
+    private FleetApiClient? loadedClient;
 
     [Reactive] private bool isLoading;
     [Reactive] private string? error;
@@ -34,7 +38,8 @@ public partial class BuildsViewModel : ReactiveObject, IHaveHeader, IDisposable
         INavigator navigator,
         IFileSystemPicker fileSystemPicker,
         IDialog dialog,
-        INotificationService notificationService)
+        INotificationService notificationService,
+        IScheduler? autoRefreshScheduler = null)
     {
         this.clientContext = clientContext;
         this.navigator = navigator;
@@ -48,6 +53,8 @@ public partial class BuildsViewModel : ReactiveObject, IHaveHeader, IDisposable
         disposables.Add(ClearFinishedJobsCommand.Results().HandleErrorsWith(notificationService, Maybe.From("Cannot clear builds")));
         disposables.Add(Observable.Timer(TimeSpan.Zero, TimeSpan.FromSeconds(1), RxSchedulers.MainThreadScheduler)
             .Subscribe(_ => RefreshBuildElapsed()));
+        AutoRefresh = new AutoRefresh(RefreshInBackground, autoRefreshScheduler);
+        disposables.Add(AutoRefresh);
 
         Header = Observable.Return<object>(new SectionHeader("Builds",
             "All projects, newest first",
@@ -57,6 +64,7 @@ public partial class BuildsViewModel : ReactiveObject, IHaveHeader, IDisposable
 
     public ReactiveCommand<Unit, Maybe<Result>> RefreshCommand { get; }
     public ReactiveCommand<Unit, Maybe<Result>> ClearFinishedJobsCommand { get; }
+    public AutoRefresh AutoRefresh { get; }
     public IObservable<object> Header { get; }
     public void Dispose() => disposables.Dispose();
 
@@ -83,6 +91,16 @@ public partial class BuildsViewModel : ReactiveObject, IHaveHeader, IDisposable
         }
     }
 
+    private async Task RefreshInBackground()
+    {
+        // Only once a load has connected; a background tick must never prompt for a connection.
+        if (IsLoading || loadedClient is not { } client)
+            return;
+
+        var jobs = await SyncBuilds(client);
+        await LoadProjectIconsAsync(client, jobs, reuseKnownIcons: true);
+    }
+
     private async Task<Maybe<Result>> ClearFinishedJobs()
     {
         Error = null;
@@ -106,6 +124,14 @@ public partial class BuildsViewModel : ReactiveObject, IHaveHeader, IDisposable
     }
 
     private async Task LoadBuilds(FleetApiClient client)
+    {
+        var jobs = await SyncBuilds(client);
+        loadedClient = client;
+        IsLoading = false;
+        await LoadProjectIconsAsync(client, jobs, reuseKnownIcons: false);
+    }
+
+    private async Task<IReadOnlyList<DeploymentJob>> SyncBuilds(FleetApiClient client)
     {
         var projectsTask = client.GetProjectsAsync();
         var jobsTask = client.GetAllJobsAsync();
@@ -135,15 +161,26 @@ public partial class BuildsViewModel : ReactiveObject, IHaveHeader, IDisposable
                 notificationService: notificationService),
             (viewModel, job) => viewModel.ApplyJobUpdate(job, ResolveProjectName(job.ProjectId, projectNames)));
 
-        IsLoading = false;
-        await LoadProjectIconsAsync(client, jobs);
+        return jobs;
     }
 
-    private async Task LoadProjectIconsAsync(FleetApiClient client, IEnumerable<DeploymentJob> jobs)
+    /// <summary>
+    /// Fills in the project icons of the build rows. Background refreshes reuse the icons
+    /// already fetched, so polling does not download every icon again on each tick.
+    /// </summary>
+    private async Task LoadProjectIconsAsync(FleetApiClient client, IEnumerable<DeploymentJob> jobs, bool reuseKnownIcons)
     {
+        if (!reuseKnownIcons)
+            projectIcons.Clear();
+
         await Task.WhenAll(jobs.Select(job => job.ProjectId).Distinct().Select(async projectId =>
         {
-            var icon = await TryLoadProjectIcon(client, projectId);
+            if (!projectIcons.TryGetValue(projectId, out var icon))
+            {
+                icon = await TryLoadProjectIcon(client, projectId);
+                projectIcons[projectId] = icon;
+            }
+
             if (icon is null)
                 return;
 
