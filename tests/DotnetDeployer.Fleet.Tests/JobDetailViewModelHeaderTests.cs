@@ -1,6 +1,8 @@
 using System.Net;
 using System.Net.Http.Json;
 using System.Reactive.Linq;
+using System.Reactive.Threading.Tasks;
+using System.Text.RegularExpressions;
 using CSharpFunctionalExtensions;
 using DotnetDeployer.Fleet.Api.Client;
 using DotnetDeployer.Fleet.Core.Domain;
@@ -53,6 +55,50 @@ public sealed class JobDetailViewModelHeaderTests
     }
 
     [Fact]
+    public async Task Header_ShouldKeepItsButtonsWhileOnlyTheElapsedTimeChanges()
+    {
+        var job = new DeploymentJob
+        {
+            Id = Guid.NewGuid(),
+            Kind = JobKind.Deploy,
+            Status = JobStatus.Running,
+            EnqueuedAt = DateTimeOffset.UtcNow.AddMinutes(-3),
+            StartedAt = DateTimeOffset.UtcNow.AddMinutes(-3),
+            CancellationRequestedAt = DateTimeOffset.UtcNow
+        };
+        using var vm = CreateViewModel(job);
+        var headers = new List<object>();
+        using var subscription = vm.Header.Subscribe(header => { lock (headers) headers.Add(header); });
+        var header = (SectionHeader)headers.Single();
+        var initialElapsed = Elapsed(header.Subtitle);
+
+        var elapsedChanged = await WaitUntil(() => Elapsed(header.Subtitle) != initialElapsed, TimeSpan.FromSeconds(10));
+
+        elapsedChanged.Should().BeTrue();
+        lock (headers) headers.Should().ContainSingle().Which.Should().BeSameAs(header);
+    }
+
+    [Fact]
+    public async Task Header_ShouldBeRebuiltWhenItsActionsChange()
+    {
+        var job = new DeploymentJob
+        {
+            Id = Guid.NewGuid(),
+            Kind = JobKind.Deploy,
+            Status = JobStatus.Succeeded,
+            EnqueuedAt = new DateTimeOffset(2026, 5, 14, 10, 30, 0, TimeSpan.Zero),
+            FinishedAt = new DateTimeOffset(2026, 5, 14, 10, 32, 5, TimeSpan.Zero),
+            TotalDurationMs = 125_000
+        };
+        using var vm = CreateViewModel(job);
+
+        await vm.ToggleDetailedLogCommand.Execute().ToTask();
+
+        var header = (SectionHeader)await vm.Header.FirstAsync();
+        header.Actions.Select(action => action.Text).Should().Equal("Hide detailed log", "Refresh");
+    }
+
+    [Fact]
     public void DestructiveHeaderAction_ShouldNotBeRenderedAsPrimaryOrSecondary()
     {
         var command = Substitute.For<System.Windows.Input.ICommand>();
@@ -68,6 +114,22 @@ public sealed class JobDetailViewModelHeaderTests
     {
         JobDetailViewModel.FormatPhaseName("worker.solution.test")
             .Should().Be("Running solution tests");
+    }
+
+    private static string? Elapsed(string? subtitle) =>
+        subtitle is null ? null : Regex.Match(subtitle, "Elapsed: [^|]*").Value;
+
+    private static async Task<bool> WaitUntil(Func<bool> condition, TimeSpan timeout)
+    {
+        var deadline = DateTime.UtcNow + timeout;
+        while (!condition())
+        {
+            if (DateTime.UtcNow > deadline)
+                return false;
+            await Task.Delay(50);
+        }
+
+        return true;
     }
 
     private static JobDetailViewModel CreateViewModel(DeploymentJob job)
