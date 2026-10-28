@@ -563,6 +563,7 @@ public partial class JobDetailViewModel : ReactiveObject, IHaveHeader, IDisposab
 
         resolvedWorkerId = workerId;
         WorkerName = ShortId(workerId);
+        PublishHeader();
         Observable.FromAsync(() => _client.GetWorkersAsync())
             .Select(workers => workers.FirstOrDefault(worker => worker.Id == workerId)?.Name)
             .Catch(Observable.Return<string?>(null))
