@@ -32,6 +32,7 @@ public partial class ProjectsViewModel : ReactiveObject, IHaveHeader, IDisposabl
     [Reactive] private bool _isLoading;
 
     public ObservableCollection<ProjectViewModel> Projects { get; } = [];
+    public ListStatus ProjectsStatus { get; }
 
     public ProjectsViewModel(
         IConnectedFleetClientContext clientContext,
@@ -47,6 +48,8 @@ public partial class ProjectsViewModel : ReactiveObject, IHaveHeader, IDisposabl
         _dialog = dialog;
         this.notificationService = notificationService;
         Navigator = navigator;
+        ProjectsStatus = ListStatus.Of(Projects, this.WhenAnyValue(vm => vm.IsLoading));
+        _disposables.Add(ProjectsStatus);
 
         var refresh = ReactiveCommand.CreateFromTask(LoadProjects);
         _disposables.Add(refresh.Results().HandleErrorsWith(notificationService, Maybe.From("Cannot load projects")));

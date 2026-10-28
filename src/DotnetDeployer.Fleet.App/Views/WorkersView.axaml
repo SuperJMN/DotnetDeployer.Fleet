@@ -24,6 +24,24 @@
         <ProgressBar DockPanel.Dock="Top" IsIndeterminate="True"
                      IsVisible="{Binding IsLoading}" Height="4" Margin="0,0,0,8" />
 
+        <Border DockPanel.Dock="Top" Classes="ListPlaceholder" IsVisible="{Binding WorkersStatus.IsLoadingFirstItems}">
+            <StackPanel>
+                <ProgressBar />
+                <TextBlock Classes="Hint" Text="Loading workers…" />
+            </StackPanel>
+        </Border>
+
+        <Border DockPanel.Dock="Top" Classes="ListPlaceholder" IsVisible="{Binding WorkersStatus.IsEmpty}">
+            <StackPanel>
+                <TextBlock Classes="Title" Text="No workers connected" />
+                <TextBlock Classes="Hint">
+                    <Run Text="Run " />
+                    <Run Text="fleet worker" FontFamily="Consolas,monospace" />
+                    <Run Text=" on a machine to add it to the fleet. It shows up here once it connects to this coordinator." />
+                </TextBlock>
+            </StackPanel>
+        </Border>
+
         <ScrollViewer>
             <ItemsControl ItemsSource="{Binding Workers}">
                 <ItemsControl.ItemsPanel>

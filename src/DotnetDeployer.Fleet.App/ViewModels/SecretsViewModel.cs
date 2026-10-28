@@ -34,6 +34,7 @@ public partial class SecretsViewModel : ReactiveObject, IHaveHeader, IDisposable
     [Reactive] private string _newValue = "";
 
     public ObservableCollection<SecretViewModel> Secrets { get; } = [];
+    public ListStatus SecretsStatus { get; }
 
     public SecretsViewModel(
         FleetApiClient client,
@@ -47,6 +48,8 @@ public partial class SecretsViewModel : ReactiveObject, IHaveHeader, IDisposable
         _picker = picker;
         _dialog = dialog;
         _notificationService = notificationService;
+        SecretsStatus = ListStatus.Of(Secrets, this.WhenAnyValue(vm => vm.IsLoading));
+        _disposables.Add(SecretsStatus);
 
         var canAdd = this.WhenAnyValue(x => x.NewName, x => x.NewValue,
             (n, v) => !string.IsNullOrWhiteSpace(n) && !string.IsNullOrWhiteSpace(v));

@@ -43,6 +43,7 @@ public partial class JobDetailViewModel : ReactiveObject, IHaveHeader, IDisposab
     private bool revealFirstErrorPending;
     private bool terminalRedrawn;
     private Guid? resolvedWorkerId;
+    private bool phasesLoaded;
 
     public DeploymentJob Job { get; private set; }
 
@@ -65,6 +66,9 @@ public partial class JobDetailViewModel : ReactiveObject, IHaveHeader, IDisposab
     public ObservableCollection<PackageArtifactViewModel> Artifacts { get; } = new();
 
     public bool HasPhases => Phases.Count > 0;
+    /// <summary>The phases have not been fetched yet, so their absence says nothing.</summary>
+    public bool IsLoadingPhases => !phasesLoaded;
+    public bool HasNoPhaseEvents => phasesLoaded && !HasPhases;
     public bool HasArtifacts => Artifacts.Count > 0;
     public bool HasCurrentPhase => !string.IsNullOrEmpty(_currentPhase);
     public string CurrentPhaseDisplay => string.IsNullOrEmpty(_currentPhase)
@@ -184,6 +188,20 @@ public partial class JobDetailViewModel : ReactiveObject, IHaveHeader, IDisposab
 
     private async Task<Maybe<Result>> RefreshSnapshot(CancellationToken ct)
     {
+        try
+        {
+            return await LoadSnapshot();
+        }
+        finally
+        {
+            // Even a failed load ends the wait, so the panel never keeps saying it is loading.
+            phasesLoaded = true;
+            RaisePhaseStateChanged();
+        }
+    }
+
+    private async Task<Maybe<Result>> LoadSnapshot()
+    {
         return await clientContext.Require().Bind(async client =>
         {
             var phasesTask = client.GetJobPhasesAsync(Job.Id);
@@ -198,18 +216,22 @@ public partial class JobDetailViewModel : ReactiveObject, IHaveHeader, IDisposab
             var job = await jobTask;
             var artifacts = await artifactsTask;
 
-            Avalonia.Threading.Dispatcher.UIThread.Post(() =>
-            {
-                if (job is not null)
-                    ApplyJobSnapshot(job);
+            // Continuations stay on the caller's (UI) context, so the view model can be updated directly.
+            if (job is not null)
+                ApplyJobSnapshot(job);
 
-                _phaseTree.Refresh(phases);
-                ApplyArtifacts(artifacts);
-                this.RaisePropertyChanged(nameof(HasCurrentPhase));
-                this.RaisePropertyChanged(nameof(HasPhases));
-                this.RaisePropertyChanged(nameof(CurrentPhaseDisplay));
-            });
+            _phaseTree.Refresh(phases);
+            ApplyArtifacts(artifacts);
+            this.RaisePropertyChanged(nameof(HasCurrentPhase));
+            this.RaisePropertyChanged(nameof(CurrentPhaseDisplay));
         });
+    }
+
+    private void RaisePhaseStateChanged()
+    {
+        this.RaisePropertyChanged(nameof(HasPhases));
+        this.RaisePropertyChanged(nameof(IsLoadingPhases));
+        this.RaisePropertyChanged(nameof(HasNoPhaseEvents));
     }
 
     /// <summary>

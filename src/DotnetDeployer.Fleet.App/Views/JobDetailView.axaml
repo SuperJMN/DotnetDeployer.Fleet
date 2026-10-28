@@ -171,9 +171,15 @@
                                 </TreeDataTemplate>
                             </TreeView.ItemTemplate>
                         </TreeView>
+                        <StackPanel Spacing="8"
+                                    HorizontalAlignment="Left"
+                                    IsVisible="{Binding IsLoadingPhases}">
+                            <ProgressBar IsIndeterminate="True" Width="200" />
+                            <TextBlock Text="Loading phases…" Opacity="0.6" />
+                        </StackPanel>
                         <TextBlock Text="No phase events yet."
                                    Opacity="0.6"
-                                   IsVisible="{Binding !HasPhases}" />
+                                   IsVisible="{Binding HasNoPhaseEvents}" />
                     </Grid>
                 </ScrollViewer>
             </DockPanel>

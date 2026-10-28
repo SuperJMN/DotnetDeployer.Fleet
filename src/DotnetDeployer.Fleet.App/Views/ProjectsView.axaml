@@ -22,6 +22,25 @@
         <ProgressBar DockPanel.Dock="Top" IsIndeterminate="True"
                      IsVisible="{Binding IsLoading}" Height="4" Margin="0,0,0,8" />
 
+        <Border DockPanel.Dock="Top" Classes="ListPlaceholder" IsVisible="{Binding ProjectsStatus.IsLoadingFirstItems}">
+            <StackPanel>
+                <ProgressBar />
+                <TextBlock Classes="Hint" Text="Loading projects…" />
+            </StackPanel>
+        </Border>
+
+        <Border DockPanel.Dock="Top" Classes="ListPlaceholder" IsVisible="{Binding ProjectsStatus.IsEmpty}">
+            <StackPanel>
+                <TextBlock Classes="Title" Text="No projects yet" />
+                <TextBlock Classes="Hint" Text="Add the Git repository of a .NET solution to build and deploy it from Fleet." />
+                <EnhancedButton Content="Add Project"
+                                Icon="{Icon mdi-plus}"
+                                Classes="Primary"
+                                HorizontalAlignment="Center"
+                                Command="{Binding AddProjectCommand}" />
+            </StackPanel>
+        </Border>
+
         <!-- Project list: card grid that adapts column count to width -->
         <ScrollViewer>
             <ItemsControl ItemsSource="{Binding Projects}">

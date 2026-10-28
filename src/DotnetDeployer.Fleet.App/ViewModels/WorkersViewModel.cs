@@ -30,6 +30,7 @@ public partial class WorkersViewModel : ReactiveObject, IHaveHeader, IDisposable
     [Reactive] private string? _coordinatorVersion;
 
     public ObservableCollection<WorkerItemViewModel> Workers { get; } = [];
+    public ListStatus WorkersStatus { get; }
 
     public WorkersViewModel(
         IConnectedFleetClientContext clientContext,
@@ -47,6 +48,8 @@ public partial class WorkersViewModel : ReactiveObject, IHaveHeader, IDisposable
         _fileSystemPicker = fileSystemPicker;
         _notificationService = notificationService;
         _coordinatorVersion = health.Current?.Version;
+        WorkersStatus = ListStatus.Of(Workers, this.WhenAnyValue(vm => vm.IsLoading));
+        _disposables.Add(WorkersStatus);
 
         RefreshCommand = ReactiveCommand.CreateFromTask(LoadAsync);
         RemoveWorkerCommand = ReactiveCommand.CreateFromTask<WorkerItemViewModel, Maybe<Result>>(RemoveAsync);
