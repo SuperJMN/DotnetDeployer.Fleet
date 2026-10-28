@@ -3,7 +3,6 @@ using CSharpFunctionalExtensions;
 using DotnetDeployer.Fleet.Api.Client;
 using DotnetDeployer.Fleet.Core.Domain;
 using DotnetDeployer.Fleet.App.ViewModels;
-using ReactiveUI.Builder;
 using Zafiro.DivineBytes;
 using Zafiro.UI;
 
@@ -13,13 +12,6 @@ public sealed class ProjectViewModelIconTests
 {
     private static readonly byte[] Png =
         Convert.FromBase64String("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII=");
-
-    static ProjectViewModelIconTests()
-    {
-        RxAppBuilder.CreateReactiveUIBuilder()
-            .WithCoreServices()
-            .BuildApp();
-    }
 
     [Fact]
     public async Task LoadProjectIcon_SetsIconBytesWhenApiReturnsBytes()

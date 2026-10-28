@@ -1,20 +1,12 @@
 using DotnetDeployer.Fleet.Api.Client;
 using DotnetDeployer.Fleet.App.ViewModels;
 using DotnetDeployer.Fleet.Core.Domain;
-using ReactiveUI.Builder;
 using Zafiro.UI.Navigation;
 
 namespace DotnetDeployer.Fleet.Tests;
 
 public sealed class EditProjectViewModelTests
 {
-    static EditProjectViewModelTests()
-    {
-        RxAppBuilder.CreateReactiveUIBuilder()
-            .WithCoreServices()
-            .BuildApp();
-    }
-
     [Theory]
     [InlineData(false)]
     [InlineData(true)]

@@ -5,20 +5,12 @@ using CSharpFunctionalExtensions;
 using DotnetDeployer.Fleet.Api.Client;
 using DotnetDeployer.Fleet.Core.Domain;
 using DotnetDeployer.Fleet.App.ViewModels;
-using ReactiveUI.Builder;
 
 namespace DotnetDeployer.Fleet.Tests;
 
 public sealed class BuildsViewModelTests
 {
     private static readonly byte[] IconBytes = [1, 2, 3];
-
-    static BuildsViewModelTests()
-    {
-        RxAppBuilder.CreateReactiveUIBuilder()
-            .WithCoreServices()
-            .BuildApp();
-    }
 
     [Fact]
     public async Task ClearFinishedJobsCommand_WhenConfirmed_ShouldDeleteFinishedJobsAndReloadBuilds()

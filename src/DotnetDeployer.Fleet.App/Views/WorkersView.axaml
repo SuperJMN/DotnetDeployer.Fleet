@@ -49,15 +49,36 @@
                                         <TextBlock Text="{Binding EmbeddedLabel}"
                                                    Opacity="0.5" FontSize="12"
                                                    VerticalAlignment="Center" />
-                                        <TextBlock Text="{Binding DisplayVersion}"
-                                                   IsVisible="{Binding Worker.Version, Converter={x:Static ObjectConverters.IsNotNull}}"
-                                                   ToolTip.Tip="{Binding Worker.Version}"
-                                                   Opacity="0.6" FontSize="11"
-                                                   VerticalAlignment="Center"
-                                                   TextTrimming="CharacterEllipsis"
-                                                   MaxWidth="220" />
+                                        <StackPanel Orientation="Horizontal" Spacing="4"
+                                                    VerticalAlignment="Center"
+                                                    IsVisible="{Binding Worker.Version, Converter={x:Static ObjectConverters.IsNotNull}}">
+                                            <ContentControl Content="{Icon mdi-alert}"
+                                                            IconOptions.Size="13"
+                                                            IconOptions.Fill="#F0B72F"
+                                                            VerticalAlignment="Center"
+                                                            ToolTip.Tip="{Binding VersionMismatchMessage}"
+                                                            IsVisible="{Binding VersionDiffers}" />
+                                            <TextBlock Text="{Binding DisplayVersion}"
+                                                       ToolTip.Tip="{Binding Worker.Version}"
+                                                       Opacity="0.6" FontSize="11"
+                                                       VerticalAlignment="Center"
+                                                       TextTrimming="CharacterEllipsis"
+                                                       MaxWidth="220" />
+                                        </StackPanel>
                                     </FlexPanel>
-                                    <TextBlock Text="{Binding StatusLabel}" FontSize="12" />
+                                    <TextBlock Text="{Binding CapabilityLabel}"
+                                               ToolTip.Tip="{Binding Worker.CpuModel}"
+                                               IsVisible="{Binding CapabilityLabel, Converter={x:Static StringConverters.IsNotNullOrEmpty}}"
+                                               FontSize="11" Opacity="0.7" />
+                                    <FlexPanel Wrap="Wrap" Gap="8" AlignItems="Center">
+                                        <TextBlock Text="{Binding StatusLabel}" FontSize="12" />
+                                        <HyperlinkButton Padding="0"
+                                                         FontSize="12"
+                                                         Content="{Binding CurrentJobLabel}"
+                                                         ToolTip.Tip="Open the build this worker is running"
+                                                         Command="{Binding OpenCurrentJobCommand}"
+                                                         IsVisible="{Binding CurrentJobLabel, Converter={x:Static ObjectConverters.IsNotNull}}" />
+                                    </FlexPanel>
                                     <TextBlock FontSize="11" Opacity="0.6">
                                         <Run Text="Last seen: " />
                                         <Run Text="{Binding LastSeenText}" />
@@ -76,11 +97,17 @@
                                                         Content="Save"
                                                         Icon="{Icon mdi-content-save}"
                                                         Classes="Primary"
-                                                        Command="{Binding SaveConfigCommand}"
-                                                        IsEnabled="{Binding !IsSaving}" />
+                                                        Command="{Binding SaveConfigCommand}" />
                                     </Grid>
-                                    <TextBlock Text="Saved" FontSize="11" Opacity="0.6"
-                                               IsVisible="{Binding IsSaved}" />
+                                    <StackPanel Orientation="Horizontal" Spacing="4"
+                                                IsVisible="{Binding IsSaved}">
+                                        <ContentControl Content="{Icon mdi-check}"
+                                                        IconOptions.Size="13"
+                                                        IconOptions.Fill="#43A047"
+                                                        VerticalAlignment="Center" />
+                                        <TextBlock Text="Saved" FontSize="11" Opacity="0.7"
+                                                   VerticalAlignment="Center" />
+                                    </StackPanel>
                                 </StackPanel>
                             </FlexPanel>
 

@@ -1,5 +1,4 @@
 using DotnetDeployer.Fleet.App.ViewModels;
-using ReactiveUI.Builder;
 using System.Reactive.Linq;
 using System.Reactive.Threading.Tasks;
 
@@ -7,13 +6,6 @@ namespace DotnetDeployer.Fleet.Tests;
 
 public sealed class PollingIntervalViewModelTests
 {
-    static PollingIntervalViewModelTests()
-    {
-        RxAppBuilder.CreateReactiveUIBuilder()
-            .WithCoreServices()
-            .BuildApp();
-    }
-
     [Fact]
     public void Persisted_zero_loads_as_manual_only()
     {

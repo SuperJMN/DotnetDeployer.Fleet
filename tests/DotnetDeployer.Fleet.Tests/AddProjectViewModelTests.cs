@@ -1,18 +1,10 @@
 using DotnetDeployer.Fleet.Api.Client;
 using DotnetDeployer.Fleet.App.ViewModels;
-using ReactiveUI.Builder;
 using System.Reactive.Linq;
 using System.Reactive.Threading.Tasks;
 
 public class AddProjectViewModelTests
 {
-    static AddProjectViewModelTests()
-    {
-        RxAppBuilder.CreateReactiveUIBuilder()
-            .WithCoreServices()
-            .BuildApp();
-    }
-
     [Fact]
     public async Task CanSave_ShouldRequireNameGitUrlAndBranch()
     {

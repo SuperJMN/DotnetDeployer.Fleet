@@ -5,19 +5,11 @@ using CSharpFunctionalExtensions;
 using DotnetDeployer.Fleet.Api.Client;
 using DotnetDeployer.Fleet.Core.Domain;
 using DotnetDeployer.Fleet.App.ViewModels;
-using ReactiveUI.Builder;
 
 namespace DotnetDeployer.Fleet.Tests;
 
 public sealed class ProjectsViewModelConnectionTests
 {
-    static ProjectsViewModelConnectionTests()
-    {
-        RxAppBuilder.CreateReactiveUIBuilder()
-            .WithCoreServices()
-            .BuildApp();
-    }
-
     [Fact]
     public async Task RefreshCommand_ShouldLoadProjectsAfterRequireSucceeds()
     {
