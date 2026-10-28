@@ -38,7 +38,8 @@ public partial class JobDetailViewModel : ReactiveObject, IHaveHeader, IDisposab
     private readonly JobPhaseTree _phaseTree = new(FormatPhaseName);
     private readonly IDisposable _filterSubscription;
     private readonly BehaviorSubject<object> _header;
-    private IDisposable _terminalFeed = Disposable.Empty;
+    private LogTerminalFeed? _terminalFeed;
+    private TerminalControlModel? _terminalModel;
     private bool isDisposed;
 
     public DeploymentJob Job { get; private set; }
@@ -72,7 +73,16 @@ public partial class JobDetailViewModel : ReactiveObject, IHaveHeader, IDisposab
 
     public ReadOnlyObservableCollection<LogLine> FilteredLogs { get; }
 
-    public TerminalControlModel? TerminalModel { get; private set; }
+    /// <summary>
+    /// The terminal that shows the visible log lines. It is replaced by an empty
+    /// one whenever the lines must be redrawn, because escape sequences cannot
+    /// remove what the terminal keeps in its scrollback.
+    /// </summary>
+    public TerminalControlModel? TerminalModel
+    {
+        get => _terminalModel;
+        private set => this.RaiseAndSetIfChanged(ref _terminalModel, value);
+    }
 
     public IReadOnlyList<LogSeverity> AvailableSeverities { get; } = new[]
     {
@@ -133,7 +143,9 @@ public partial class JobDetailViewModel : ReactiveObject, IHaveHeader, IDisposab
             .Filter(minSeverityChanges.Select(min => (Func<LogLine, bool>)(line => (int)line.Severity >= (int)min)))
             .ObserveOn(RxSchedulers.MainThreadScheduler)
             .Bind(out var filtered)
-            .Subscribe();
+            // One terminal update per change set, so a filter change that removes
+            // or inserts many lines redraws the terminal only once.
+            .Subscribe(_ => _terminalFeed?.Sync());
 
         FilteredLogs = filtered;
 
@@ -235,24 +247,41 @@ public partial class JobDetailViewModel : ReactiveObject, IHaveHeader, IDisposab
     /// </summary>
     public void SetTerminalModel(TerminalControlModel model)
     {
-        ShowLogsIn(model.Feed);
         TerminalModel = model;
+        ShowLogsIn(text => TerminalModel?.Feed(text), ReplaceTerminalModelWithEmptyOne);
     }
 
     /// <summary>
     /// Writes the visible log lines, and every later change to them, to a terminal.
     /// </summary>
-    internal void ShowLogsIn(Action<string> writeToTerminal)
+    /// <param name="writeToTerminal">Writes text to the terminal.</param>
+    /// <param name="clearTerminal">Empties the terminal completely, scrollback included.</param>
+    internal void ShowLogsIn(Action<string> writeToTerminal, Action clearTerminal)
     {
-        DetachTerminalModel();
-        _terminalFeed = new LogTerminalFeed(FilteredLogs, writeToTerminal);
+        _terminalFeed = new LogTerminalFeed(FilteredLogs, writeToTerminal, clearTerminal);
+        _terminalFeed.Sync();
     }
 
     public void DetachTerminalModel()
     {
-        _terminalFeed.Dispose();
-        _terminalFeed = Disposable.Empty;
+        _terminalFeed = null;
         TerminalModel = null;
+    }
+
+    private void ReplaceTerminalModelWithEmptyOne()
+    {
+        if (TerminalModel is not { } current) return;
+
+        var terminal = current.Terminal;
+        TerminalModel = new TerminalControlModel(new TerminalOptions
+        {
+            Cols = terminal.Cols,
+            Rows = terminal.Rows,
+            Scrollback = terminal.Options.Scrollback,
+            TabStopWidth = terminal.Options.TabStopWidth,
+            TermName = terminal.Options.TermName,
+            ConvertEol = terminal.Options.ConvertEol,
+        });
     }
 
     private void OnSearchTextChanged(string? text)
@@ -549,7 +578,7 @@ public partial class JobDetailViewModel : ReactiveObject, IHaveHeader, IDisposab
         _cts?.Cancel();
         _cts?.Dispose();
         disposables.Dispose();
-        _terminalFeed.Dispose();
+        _terminalFeed = null;
         _filterSubscription.Dispose();
         _phaseTree.Dispose();
         _logs.Dispose();

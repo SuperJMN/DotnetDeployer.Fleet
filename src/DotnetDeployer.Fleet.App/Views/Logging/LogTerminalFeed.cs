@@ -1,52 +1,53 @@
-using System.Collections.ObjectModel;
-using System.Collections.Specialized;
 using DotnetDeployer.Fleet.Core.Logging;
 
 namespace DotnetDeployer.Fleet.App.Views.Logging;
 
 /// <summary>
-/// The single writer of a job's visible log lines into a terminal. It mirrors
-/// <paramref name="lines"/> (already filtered by severity): added lines are
-/// appended once, and any other change redraws the terminal from scratch.
+/// The single writer of a job's visible log lines into a terminal. It keeps the
+/// terminal equal to <paramref name="lines"/> (already filtered by severity):
+/// when the lines only grew at the end, just the new tail is written; any other
+/// change (such as a severity filter change) empties the terminal through
+/// <paramref name="clear"/> and writes the lines again.
 /// </summary>
-internal sealed class LogTerminalFeed : IDisposable
+/// <param name="lines">The visible lines, in order.</param>
+/// <param name="write">Writes text to the terminal.</param>
+/// <param name="clear">Empties the terminal completely, scrollback included.</param>
+internal sealed class LogTerminalFeed(IReadOnlyList<LogLine> lines, Action<string> write, Action clear)
 {
-    public const string ClearScreen = "\x1b[2J\x1b[H";
+    // Log lines are records, so identity (not value equality) tells two equal lines apart.
+    private readonly List<LogLine> written = [];
 
-    private readonly ReadOnlyObservableCollection<LogLine> lines;
-    private readonly Action<string> write;
-
-    public LogTerminalFeed(ReadOnlyObservableCollection<LogLine> lines, Action<string> write)
+    /// <summary>
+    /// Brings the terminal up to date with the current lines. Call it once per
+    /// change to the lines, after the change has been applied.
+    /// </summary>
+    public void Sync()
     {
-        this.lines = lines;
-        this.write = write;
-
-        Redraw();
-        ((INotifyCollectionChanged)lines).CollectionChanged += OnLinesChanged;
-    }
-
-    private void OnLinesChanged(object? sender, NotifyCollectionChangedEventArgs args)
-    {
-        if (args is { Action: NotifyCollectionChangedAction.Add, NewItems: not null })
+        if (!StartsWithWrittenLines())
         {
-            Write(args.NewItems.Cast<LogLine>());
-            return;
+            clear();
+            written.Clear();
         }
 
-        Redraw();
-    }
-
-    private void Redraw()
-    {
-        write(ClearScreen);
-        Write(lines);
-    }
-
-    private void Write(IEnumerable<LogLine> toWrite)
-    {
-        foreach (var line in toWrite)
+        for (var i = written.Count; i < lines.Count; i++)
+        {
+            var line = lines[i];
             write(LogAnsi.Format(line) + "\r\n");
+            written.Add(line);
+        }
     }
 
-    public void Dispose() => ((INotifyCollectionChanged)lines).CollectionChanged -= OnLinesChanged;
+    private bool StartsWithWrittenLines()
+    {
+        if (lines.Count < written.Count)
+            return false;
+
+        for (var i = 0; i < written.Count; i++)
+        {
+            if (!ReferenceEquals(lines[i], written[i]))
+                return false;
+        }
+
+        return true;
+    }
 }

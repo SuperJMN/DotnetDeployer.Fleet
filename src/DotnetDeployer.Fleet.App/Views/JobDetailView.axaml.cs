@@ -21,11 +21,8 @@ public partial class JobDetailView : UserControl
 
         if (DataContext is not JobDetailViewModel vm) return;
 
-        var terminal = LogTerminal;
-        if (terminal is null) return;
-
-        terminal.Model ??= new TerminalControlModel();
-        vm.SetTerminalModel(terminal.Model);
+        // The terminal control shows vm.TerminalModel through a binding.
+        vm.SetTerminalModel(new TerminalControlModel());
         _attachedVm = vm;
     }
 }
