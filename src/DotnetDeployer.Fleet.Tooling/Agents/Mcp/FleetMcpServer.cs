@@ -95,9 +95,14 @@ public sealed class FleetMcpServer(FleetMcpTools tools)
             };
             await WriteAsync(output, response, ct);
         }
-        catch (OperationCanceledException) when (!ct.IsCancellationRequested)
+        catch (OperationCanceledException) when (requestCts.IsCancellationRequested && !ct.IsCancellationRequested)
         {
             // Cancelled by the client: MCP says no response is sent for a cancelled request.
+        }
+        catch (OperationCanceledException) when (!ct.IsCancellationRequested)
+        {
+            // A timeout (for example HttpClient's) is not a cancellation by the client: it must get an answer.
+            await WriteAsync(output, Error(id, -32603, FleetMcpTools.TimeoutMessage), ct);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {

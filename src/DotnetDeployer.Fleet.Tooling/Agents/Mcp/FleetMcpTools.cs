@@ -215,7 +215,14 @@ public sealed class FleetMcpTools(Func<CancellationToken, Task<FleetOperations>>
         {
             return new McpToolOutcome($"Invalid argument: {ex.Message}", true);
         }
+        catch (Exception ex) when (ex is OperationCanceledException or TimeoutException && !ct.IsCancellationRequested)
+        {
+            // HttpClient reports its timeout as a TaskCanceledException; the request itself was not cancelled.
+            return new McpToolOutcome(TimeoutMessage, true);
+        }
     }
+
+    public const string TimeoutMessage = "The coordinator did not answer in time.";
 
     /// <summary>Reads <c>fleet://jobs/{id}/logs</c>; null when the URI is not a Fleet resource.</summary>
     public async Task<string?> ReadResourceAsync(string uri, CancellationToken ct)

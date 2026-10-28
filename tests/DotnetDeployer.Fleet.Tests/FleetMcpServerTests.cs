@@ -9,10 +9,15 @@ public sealed class FleetMcpServerTests
 {
     private readonly FakeCoordinator coordinator = new();
 
-    private async Task<IReadOnlyList<JsonObject>> Exchange(params object[] requests)
+    private Task<IReadOnlyList<JsonObject>> Exchange(params object[] requests)
     {
         var operations = new FleetOperations(coordinator.CreateClient(), delay: (_, _) => Task.CompletedTask);
-        var server = new FleetMcpServer(new FleetMcpTools(_ => Task.FromResult(operations)));
+        return Exchange(_ => Task.FromResult(operations), requests);
+    }
+
+    private static async Task<IReadOnlyList<JsonObject>> Exchange(Func<CancellationToken, Task<FleetOperations>> connect, params object[] requests)
+    {
+        var server = new FleetMcpServer(new FleetMcpTools(connect));
         var input = new StringReader(string.Join('\n', requests.Select(r => System.Text.Json.JsonSerializer.Serialize(r))) + "\n");
         var output = new StringWriter();
 
@@ -123,6 +128,21 @@ public sealed class FleetMcpServerTests
 
         Response(messages, 1)["result"]!["contents"]![0]!["text"]!.GetValue<string>()
             .Should().Be("line one\nline two\n");
+    }
+
+    [Fact]
+    public async Task A_coordinator_that_does_not_answer_in_time_still_gets_a_response()
+    {
+        Task<FleetOperations> TimesOut(CancellationToken _) => Task.FromException<FleetOperations>(new TaskCanceledException("HttpClient.Timeout elapsed"));
+
+        var messages = await Exchange(TimesOut,
+            Call(1, "list_projects", new { }),
+            new { jsonrpc = "2.0", id = 2, method = "resources/read", @params = new { uri = $"fleet://jobs/{Guid.NewGuid()}/logs" } });
+
+        var tool = Response(messages, 1)["result"]!;
+        tool["isError"]!.GetValue<bool>().Should().BeTrue();
+        tool["content"]![0]!["text"]!.GetValue<string>().Should().Be(FleetMcpTools.TimeoutMessage);
+        Response(messages, 2)["error"]!["message"]!.GetValue<string>().Should().Be(FleetMcpTools.TimeoutMessage);
     }
 
     [Fact]
