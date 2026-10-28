@@ -29,6 +29,23 @@ internal static class DestructiveConfirmation
         }, tone: DialogTone.Warning);
 
     /// <summary>
+    /// Asks before queuing a deploy, which publishes to NuGet, GitHub Releases and any other target
+    /// enabled in the repository's deployer.yaml and cannot be taken back. Names the project, the
+    /// branch and, when polling has seen one, the latest known commit.
+    /// </summary>
+    public static Task<bool> ConfirmDeploy(this IDialog dialog, Project project)
+    {
+        var commit = project.LastPolledCommitSha is { Length: > 0 } sha
+            ? $"the latest commit on {project.Branch} (last seen: {sha[..Math.Min(7, sha.Length)]})"
+            : $"the latest commit on {project.Branch}";
+
+        return dialog.ConfirmDestructive(
+            "Queue deploy?",
+            $"This deploys \"{project.Name}\" from {commit} and publishes it to every target enabled in its deployer.yaml, such as NuGet and GitHub Releases. Published packages and releases cannot be taken back.",
+            "Queue Deploy");
+    }
+
+    /// <summary>
     /// Tells how many finished builds will go and that active ones stay. Returns false without
     /// asking when there is nothing to clear.
     /// </summary>
