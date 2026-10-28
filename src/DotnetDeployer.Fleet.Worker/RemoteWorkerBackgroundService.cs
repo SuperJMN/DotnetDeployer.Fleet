@@ -1050,6 +1050,15 @@ public class RemoteWorkerBackgroundService : BackgroundService
                     return (false, $"{push.Error} Update the '{secretName}' secret and redeploy this commit; the packages already built are reused.", false);
                 }
 
+                // A refused package cannot fix itself either: these bytes will never be accepted,
+                // so the release of this commit needs a person, not another retry.
+                if (NuGetPackagePusher.IsPackageRejection(push.Error))
+                {
+                    await jobSource.SetNuGetReleasePackageStateAsync(job.Id, sha, item.Package.Id,
+                        NuGetReleasePackageState.InterventionRequired, push.Error!, token);
+                    return (false, $"{push.Error} The package built for this commit cannot be published; fix the cause and release a new commit.", false);
+                }
+
                 // A duplicate rejection means the feed already holds this ID/version, typically
                 // from an earlier attempt that is still indexing. Background verification decides
                 // whether those bytes are ours.

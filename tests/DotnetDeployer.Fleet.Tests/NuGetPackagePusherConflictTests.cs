@@ -199,6 +199,36 @@ public sealed class NuGetPackagePusherConflictTests : IDisposable
     }
 
     [Fact]
+    public async Task Push_to_remote_feed_reports_a_refused_package_with_the_feed_reason()
+    {
+        var workDir = CreateTempDir("work");
+        var pkgPath = Path.Combine(workDir, "MyPackage.1.0.0.nupkg");
+        await File.WriteAllBytesAsync(pkgPath, [1, 2, 3]);
+
+        var fakeRunner = new FakeStreamingProcessRunner(async (_, onLine) =>
+        {
+            await onLine("  BadRequest https://nuget.example.com/v3/package/ 1305 ms");
+            await onLine("error: Response status code does not indicate success: 400 (A nuget package's ReleaseNotes property may not be more than 35000 characters long.).");
+            return 1;
+        });
+
+        var result = await NuGetPackagePusher.PushAsync(
+            workDir,
+            pkgPath,
+            "test-key",
+            "https://nuget.example.com/v3/index.json",
+            _ => Task.CompletedTask,
+            fakeRunner);
+
+        result.Success.Should().BeFalse();
+        NuGetPackagePusher.IsPackageRejection(result.Error).Should().BeTrue();
+        NuGetPackagePusher.IsAuthorizationRejection(result.Error).Should().BeFalse();
+        NuGetPackagePusher.IsDuplicateRejection(result.Error).Should().BeFalse();
+        result.Error.Should().Contain("HTTP 400")
+            .And.Contain("ReleaseNotes property may not be more than 35000 characters long.");
+    }
+
+    [Fact]
     public async Task Push_to_remote_feed_fails_closed_if_duplicate_detected_even_on_zero_exit()
     {
         var workDir = CreateTempDir("work");
