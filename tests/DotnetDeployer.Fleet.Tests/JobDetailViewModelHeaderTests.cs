@@ -99,6 +99,56 @@ public sealed class JobDetailViewModelHeaderTests
     }
 
     [Fact]
+    public async Task Header_ShouldNameTheWorkerAndTheCommitOfTheJob()
+    {
+        var workerId = Guid.NewGuid();
+        var job = FinishedJob(JobStatus.Failed);
+        job.WorkerId = workerId;
+        job.TriggerCommitSha = "58f1c495e00554b14859456e8557aa98b9b177dd";
+        using var vm = CreateViewModel(job, [Worker(workerId, "rpi4")]);
+
+        var header = await vm.Header.OfType<SectionHeader>()
+            .FirstAsync(h => h.Subtitle.Contains("Worker: rpi4"))
+            .Timeout(TimeSpan.FromSeconds(5));
+
+        header.Subtitle.Should().Contain("Commit: 58f1c49");
+    }
+
+    [Fact]
+    public async Task Header_WhenWorkerNamesAreUnavailable_ShouldShowTheShortWorkerId()
+    {
+        var job = FinishedJob(JobStatus.Failed);
+        job.WorkerId = Guid.Parse("12345678-9abc-def0-1234-56789abcdef0");
+        using var vm = CreateViewModel(job);
+
+        var header = (SectionHeader)await vm.Header.FirstAsync();
+
+        header.Subtitle.Should().Contain("Worker: 12345678");
+    }
+
+    [Fact]
+    public async Task Elapsed_time_uses_minutes_and_seconds()
+    {
+        using var vm = CreateViewModel(FinishedJob(JobStatus.Failed));
+
+        var header = (SectionHeader)await vm.Header.FirstAsync();
+
+        header.Subtitle.Should().Contain("Elapsed: 4:03");
+    }
+
+    [Fact]
+    public async Task Showing_the_error_opens_the_detailed_log()
+    {
+        using var vm = CreateViewModel(FinishedJob(JobStatus.Failed));
+
+        await vm.ShowErrorInLogCommand.Execute();
+
+        vm.IsDetailedLogVisible.Should().BeTrue();
+        var header = (SectionHeader)await vm.Header.FirstAsync();
+        header.Actions.Select(action => action.Text).Should().Contain("Hide detailed log");
+    }
+
+    [Fact]
     public void DestructiveHeaderAction_ShouldNotBeRenderedAsPrimaryOrSecondary()
     {
         var command = Substitute.For<System.Windows.Input.ICommand>();
@@ -132,9 +182,23 @@ public sealed class JobDetailViewModelHeaderTests
         return true;
     }
 
-    private static JobDetailViewModel CreateViewModel(DeploymentJob job)
+    private static DeploymentJob FinishedJob(JobStatus status) => new()
     {
-        var client = CreateClient(job);
+        Id = Guid.NewGuid(),
+        Kind = JobKind.Deploy,
+        Status = status,
+        ErrorMessage = status == JobStatus.Failed ? "dotnet test exited with code 1" : null,
+        EnqueuedAt = new DateTimeOffset(2026, 5, 14, 10, 30, 0, TimeSpan.Zero),
+        FinishedAt = new DateTimeOffset(2026, 5, 14, 10, 34, 3, TimeSpan.Zero),
+        TotalDurationMs = 243_000
+    };
+
+    private static FleetApiClient.WorkerInfo Worker(Guid id, string name) =>
+        new(id, name, WorkerStatus.Online, false, null, 10, null);
+
+    private static JobDetailViewModel CreateViewModel(DeploymentJob job, FleetApiClient.WorkerInfo[]? workers = null)
+    {
+        var client = CreateClient(job, workers);
         var context = Substitute.For<IConnectedFleetClientContext>();
         context.Require().Returns(Task.FromResult(Maybe.From(Result.Success(client))));
 
@@ -147,7 +211,7 @@ public sealed class JobDetailViewModelHeaderTests
             notificationService: Substitute.For<Zafiro.UI.INotificationService>());
     }
 
-    private static FleetApiClient CreateClient(DeploymentJob job)
+    private static FleetApiClient CreateClient(DeploymentJob job, FleetApiClient.WorkerInfo[]? workers)
     {
         var handler = new StubHandler(request =>
         {
@@ -169,6 +233,12 @@ public sealed class JobDetailViewModelHeaderTests
                 return new HttpResponseMessage(HttpStatusCode.OK)
                 {
                     Content = JsonContent.Create(Array.Empty<PackageArtifact>())
+                };
+
+            if (request.Method == HttpMethod.Get && path == "/api/workers" && workers is not null)
+                return new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = JsonContent.Create(workers)
                 };
 
             return new HttpResponseMessage(HttpStatusCode.NotFound);
