@@ -1,5 +1,6 @@
 using System.Collections.ObjectModel;
 using System.Reactive;
+using System.Reactive.Concurrency;
 using System.Reactive.Disposables;
 using System.Reactive.Linq;
 using System.Reactive.Subjects;
@@ -45,7 +46,8 @@ public partial class ProjectDetailViewModel : ReactiveObject, IHaveHeader, IDisp
         INavigator navigator,
         IFileSystemPicker fileSystemPicker,
         IDialog dialog,
-        INotificationService notificationService)
+        INotificationService notificationService,
+        IScheduler? autoRefreshScheduler = null)
     {
         Project = project;
         _client = client;
@@ -75,6 +77,8 @@ public partial class ProjectDetailViewModel : ReactiveObject, IHaveHeader, IDisp
         _disposables.Add(ClearFinishedJobsCommand.Results().HandleErrorsWith(notificationService, Maybe.From("Cannot clear builds")));
         _disposables.Add(Observable.Timer(TimeSpan.Zero, TimeSpan.FromSeconds(1), RxSchedulers.MainThreadScheduler)
             .Subscribe(_ => RefreshJobElapsed()));
+        AutoRefresh = new AutoRefresh(RefreshInBackground, autoRefreshScheduler);
+        _disposables.Add(AutoRefresh);
         _header = new BehaviorSubject<object>(CreateHeader());
         Header = _header.AsObservable();
     }
@@ -98,6 +102,7 @@ public partial class ProjectDetailViewModel : ReactiveObject, IHaveHeader, IDisp
     public ReactiveCommand<Unit, Maybe<Result>> ClearFinishedJobsCommand { get; }
     public ReactiveCommand<Unit, Unit> EditCommand { get; }
     public ReactiveCommand<Unit, Unit> OpenSecretsCommand { get; }
+    public AutoRefresh AutoRefresh { get; }
     public IObservable<object> Header { get; }
     public void Dispose()
     {
@@ -112,34 +117,48 @@ public partial class ProjectDetailViewModel : ReactiveObject, IHaveHeader, IDisp
         Error = null;
         try
         {
-            return await clientContext.Require().Bind(async client =>
-            {
-                var projectTask = client.GetProjectAsync(Project.Id);
-                var jobsTask = client.GetProjectJobsAsync(Project.Id);
-
-                await Task.WhenAll(projectTask, jobsTask);
-
-                var project = await projectTask;
-                if (project is not null)
-                    ApplyProjectUpdate(project);
-
-                var jobs = await jobsTask;
-                ObservableCollectionSync.Sync(
-                    Jobs,
-                    jobs.OrderByDescending(j => j.EnqueuedAt),
-                    job => job.Id,
-                    viewModel => viewModel.Job.Id,
-                    job => new JobViewModel(job, client, _navigator, this, _fileSystemPicker, clientContext: clientContext, notificationService: notificationService),
-                    (viewModel, job) => viewModel.ApplyJobUpdate(job));
-
-                RaiseJobHistoryStateChanged();
-            });
+            return await clientContext.Require().Bind(SyncProjectAndJobs);
         }
         finally
         {
             IsLoading = false;
             RaiseJobHistoryStateChanged();
         }
+    }
+
+    private async Task RefreshInBackground()
+    {
+        if (IsLoading)
+            return;
+
+        await SyncProjectAndJobs(_client);
+    }
+
+    private async Task SyncProjectAndJobs(FleetApiClient client)
+    {
+        var projectTask = client.GetProjectAsync(Project.Id);
+        var jobsTask = client.GetProjectJobsAsync(Project.Id);
+
+        await Task.WhenAll(projectTask, jobsTask);
+
+        var project = await projectTask;
+        if (project is not null)
+            ApplyProjectUpdate(project);
+
+        SyncJobs(client, await jobsTask);
+    }
+
+    private void SyncJobs(FleetApiClient client, IEnumerable<DeploymentJob> jobs)
+    {
+        ObservableCollectionSync.Sync(
+            Jobs,
+            jobs.OrderByDescending(j => j.EnqueuedAt),
+            job => job.Id,
+            viewModel => viewModel.Job.Id,
+            job => new JobViewModel(job, client, _navigator, this, _fileSystemPicker, clientContext: clientContext, notificationService: notificationService),
+            (viewModel, job) => viewModel.ApplyJobUpdate(job));
+
+        RaiseJobHistoryStateChanged();
     }
 
     private async Task<Maybe<Result>> Deploy()
@@ -210,16 +229,7 @@ public partial class ProjectDetailViewModel : ReactiveObject, IHaveHeader, IDisp
                 return;
 
             await client.DeleteFinishedProjectJobsAsync(Project.Id);
-            var jobs = await client.GetProjectJobsAsync(Project.Id);
-            ObservableCollectionSync.Sync(
-                Jobs,
-                jobs.OrderByDescending(j => j.EnqueuedAt),
-                job => job.Id,
-                viewModel => viewModel.Job.Id,
-                job => new JobViewModel(job, client, _navigator, this, _fileSystemPicker, clientContext: clientContext, notificationService: notificationService),
-                (viewModel, job) => viewModel.ApplyJobUpdate(job));
-
-            RaiseJobHistoryStateChanged();
+            SyncJobs(client, await client.GetProjectJobsAsync(Project.Id));
         });
     }
 

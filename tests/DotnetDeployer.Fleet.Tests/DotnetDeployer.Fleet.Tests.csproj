@@ -12,6 +12,7 @@
     <PackageReference Include="coverlet.collector" />
     <PackageReference Include="NSubstitute" />
     <PackageReference Include="FluentAssertions" />
+    <PackageReference Include="Microsoft.Reactive.Testing" />
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="..\..\src\DotnetDeployer.Fleet.Core\DotnetDeployer.Fleet.Core.csproj" />

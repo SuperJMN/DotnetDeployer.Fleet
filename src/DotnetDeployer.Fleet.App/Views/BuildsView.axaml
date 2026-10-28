@@ -7,7 +7,14 @@
     <Interaction.Behaviors>
         <DataContextChangedTrigger>
             <InvokeCommandAction Command="{Binding RefreshCommand}" />
+            <InvokeCommandAction Command="{Binding AutoRefresh.StartCommand}" />
         </DataContextChangedTrigger>
+        <AttachedToVisualTreeTrigger>
+            <InvokeCommandAction Command="{Binding AutoRefresh.StartCommand}" />
+        </AttachedToVisualTreeTrigger>
+        <DetachedFromVisualTreeTrigger>
+            <InvokeCommandAction Command="{Binding AutoRefresh.StopCommand}" />
+        </DetachedFromVisualTreeTrigger>
     </Interaction.Behaviors>
 
     <DockPanel Margin="16">
