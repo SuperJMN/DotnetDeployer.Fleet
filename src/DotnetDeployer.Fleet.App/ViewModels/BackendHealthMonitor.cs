@@ -52,9 +52,14 @@ public sealed class BackendHealthMonitor : IBackendHealthMonitor
     private bool _disposed;
 
     public BackendHealthMonitor(FleetApiClient client)
+        : this(client, new HttpClientHandler())
+    {
+    }
+
+    internal BackendHealthMonitor(FleetApiClient client, HttpMessageHandler probeHandler)
     {
         _client = client;
-        _probe = new HttpClient { Timeout = ProbeTimeout };
+        _probe = new HttpClient(probeHandler) { Timeout = ProbeTimeout };
         _subject = new BehaviorSubject<BackendHealthSnapshot>(
             new BackendHealthSnapshot(BackendHealth.Unknown, null, DateTimeOffset.UtcNow, null, null, _client.BaseAddress));
     }
@@ -85,8 +90,13 @@ public sealed class BackendHealthMonitor : IBackendHealthMonitor
             return s;
         }
 
-        _subject.OnNext(new BackendHealthSnapshot(
-            BackendHealth.Checking, "Checking…", DateTimeOffset.UtcNow, _subject.Value.Version, null, endpoint));
+        // Routine re-checks of a healthy endpoint stay silent so the status bar
+        // does not flicker; "Checking…" is only shown when health is not yet known.
+        if (!IsHealthy(_subject.Value, endpoint))
+        {
+            _subject.OnNext(new BackendHealthSnapshot(
+                BackendHealth.Checking, "Checking…", DateTimeOffset.UtcNow, _subject.Value.Version, null, endpoint));
+        }
 
         var url = new Uri(endpoint, "health");
         var sw = System.Diagnostics.Stopwatch.StartNew();
@@ -149,6 +159,9 @@ public sealed class BackendHealthMonitor : IBackendHealthMonitor
             return snap;
         }
     }
+
+    private static bool IsHealthy(BackendHealthSnapshot snapshot, Uri endpoint) =>
+        snapshot.State == BackendHealth.Healthy && snapshot.Endpoint == endpoint;
 
     public void Dispose()
     {
