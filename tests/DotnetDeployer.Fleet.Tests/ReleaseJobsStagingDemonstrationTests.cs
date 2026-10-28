@@ -547,6 +547,7 @@ public sealed class ReleaseJobsStagingDemonstrationTests : IDisposable
     [InlineData("accepted-before-indexing", true, NuGetReleasePackageState.AwaitingVerification)]
     [InlineData("indexing-409", true, NuGetReleasePackageState.AwaitingVerification)]
     [InlineData("api-key-rejected", false, NuGetReleasePackageState.Incomplete)]
+    [InlineData("package-rejected", false, NuGetReleasePackageState.InterventionRequired)]
     public async Task Push_outcomes_use_acceptance_or_verified_download_when_response_is_ambiguous(
         string scenario, bool shouldSucceed, NuGetReleasePackageState expectedState)
     {
@@ -575,6 +576,8 @@ public sealed class ReleaseJobsStagingDemonstrationTests : IDisposable
                 return (false, "Duplicate on feed: Package 'DemoLib.1.0.0.nupkg' returned HTTP 409.");
             if (scenario == "api-key-rejected")
                 return (false, "API key rejected: 'feed' rejected the API key for 'DemoLib.1.0.0.nupkg' (HTTP 403).");
+            if (scenario == "package-rejected")
+                return (false, "Package rejected: 'feed' refused 'DemoLib.1.0.0.nupkg' (HTTP 400): A nuget package's ReleaseNotes property may not be more than 35000 characters long.");
 
             File.Copy(package, destination);
             if (scenario == "conflicting-409")
@@ -613,6 +616,13 @@ public sealed class ReleaseJobsStagingDemonstrationTests : IDisposable
             Directory.GetFiles(feed, "*.nupkg", SearchOption.AllDirectories).Should().BeEmpty();
             (await storage.GetJobAsync(job.Id))!.ErrorMessage.Should().Contain("rejected the API key")
                 .And.Contain("redeploy this commit");
+        }
+        else if (scenario == "package-rejected")
+        {
+            // A refused package fails at once and is never retried with the same bytes.
+            Directory.GetFiles(feed, "*.nupkg", SearchOption.AllDirectories).Should().BeEmpty();
+            (await storage.GetJobAsync(job.Id))!.ErrorMessage.Should().Contain("HTTP 400")
+                .And.Contain("release a new commit");
         }
         else if (scenario == "indexing-409")
         {

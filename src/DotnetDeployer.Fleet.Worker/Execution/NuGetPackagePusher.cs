@@ -73,10 +73,12 @@ internal static class NuGetPackagePusher
 
         var duplicateConflictDetected = false;
         int? authorizationStatus = null;
+        (int Status, string Reason)? packageRejection = null;
 
         var exitCode = await processRunner.RunAsync(psi, async line =>
         {
             authorizationStatus ??= TryParseAuthorizationStatus(line);
+            packageRejection ??= TryParsePackageRejection(line);
 
             if (line.Contains("already exists", StringComparison.OrdinalIgnoreCase) ||
                 line.Contains("Conflict", StringComparison.OrdinalIgnoreCase) ||
@@ -105,6 +107,13 @@ internal static class NuGetPackagePusher
                 var unverified = $"{DuplicateRejectionPrefix}Package '{packageFileName}' returned HTTP 409 from '{source}'; its remote contents must be verified after it becomes downloadable.";
                 await onLine($"[nuget.push] HTTP 409: {unverified}");
                 return (false, unverified);
+            }
+
+            if (packageRejection is { } rejection)
+            {
+                var rejected = $"{PackageRejectionPrefix}'{source}' refused '{packageFileName}' (HTTP {rejection.Status}): {rejection.Reason}";
+                await onLine($"[nuget.push] HTTP {rejection.Status}: {rejected}");
+                return (false, rejected);
             }
 
             return (false, $"dotnet nuget push for '{packageFileName}' exited with code {exitCode}");
@@ -140,6 +149,7 @@ internal static class NuGetPackagePusher
 
     private const string DuplicateRejectionPrefix = "Duplicate on feed: ";
     private const string AuthorizationRejectionPrefix = "API key rejected: ";
+    private const string PackageRejectionPrefix = "Package rejected: ";
 
     private static readonly Regex AuthorizationStatusLine = new(
         @"status code does not indicate success:\s*(?<code>401|403)\b|^\s*(?<word>Unauthorized|Forbidden)\s+https?://",
@@ -162,6 +172,26 @@ internal static class NuGetPackagePusher
             return int.Parse(match.Groups["code"].Value);
 
         return string.Equals(match.Groups["word"].Value, "Unauthorized", StringComparison.OrdinalIgnoreCase) ? 401 : 403;
+    }
+
+    private static readonly Regex PackageRejectionLine = new(
+        @"status code does not indicate success:\s*(?<code>4(?!01|03|09)\d\d)\s*\((?<reason>.*)\)\.?\s*$",
+        RegexOptions.IgnoreCase);
+
+    /// <summary>
+    /// True when the feed refused the package itself (an HTTP 4xx other than 401, 403 or 409),
+    /// for example because its metadata breaks a feed rule. Pushing the same bytes again can
+    /// never succeed: the fix needs a new package, so a new commit.
+    /// </summary>
+    internal static bool IsPackageRejection(string? error) =>
+        error?.StartsWith(PackageRejectionPrefix, StringComparison.Ordinal) == true;
+
+    private static (int Status, string Reason)? TryParsePackageRejection(string line)
+    {
+        var match = PackageRejectionLine.Match(line);
+        return match.Success
+            ? (int.Parse(match.Groups["code"].Value), match.Groups["reason"].Value.Trim())
+            : null;
     }
 
     /// <summary>True when the feed refused the push because it already holds this ID/version.</summary>
