@@ -137,6 +137,61 @@ public sealed class DestructiveConfirmationTests
     }
 
     [Fact]
+    public async Task Cancelling_queue_deploy_queues_nothing()
+    {
+        var project = AProject();
+        var api = new RecordingApi();
+        using var vm = ProjectDetail(project, api, new ScriptedDialog(confirm: false));
+
+        await vm.DeployCommand.Execute();
+
+        api.Posts.Should().BeEmpty();
+        vm.Jobs.Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task Queue_deploy_names_the_project_branch_known_commit_and_publishing_targets()
+    {
+        var project = AProject();
+        project.LastPolledCommitSha = "0123456789abcdef";
+        var dialog = new ScriptedDialog(confirm: false);
+        using var vm = ProjectDetail(project, new RecordingApi(), dialog);
+
+        await vm.DeployCommand.Execute();
+
+        dialog.Shown.Should().ContainSingle().Which.Message.Should()
+            .Contain("\"App\"").And.Contain("master").And.Contain("0123456")
+            .And.Contain("NuGet").And.Contain("GitHub Releases").And.Contain("cannot be taken back");
+    }
+
+    [Fact]
+    public async Task Confirming_queue_deploy_queues_the_deploy_of_the_project()
+    {
+        var project = AProject();
+        var api = new RecordingApi();
+        using var vm = ProjectDetail(project, api, new ScriptedDialog(confirm: true));
+
+        await vm.DeployCommand.Execute();
+
+        api.Posts.Should().Equal($"/api/projects/{project.Id}/deploy");
+        vm.Jobs.Should().ContainSingle().Which.KindText.Should().Be("Deploy");
+    }
+
+    [Fact]
+    public async Task Project_header_sets_queue_deploy_apart_from_queue_build()
+    {
+        using var vm = ProjectDetail(AProject(), new RecordingApi(), new ScriptedDialog(confirm: false));
+
+        var header = (SectionHeader)await vm.Header.FirstAsync();
+        var deploy = header.Actions.Single(action => action.Text == "Queue Deploy");
+        var build = header.Actions.Single(action => action.Text == "Queue Build");
+
+        deploy.IsDestructiveCommand.Should().BeTrue();
+        build.IsPrimaryCommand.Should().BeTrue();
+        header.Actions.Where(action => action.IsDestructiveCommand).Should().ContainSingle().Which.Should().BeSameAs(deploy);
+    }
+
+    [Fact]
     public async Task Cancelling_the_removal_of_a_worker_keeps_it()
     {
         var api = new RecordingApi();
@@ -236,6 +291,13 @@ public sealed class DestructiveConfirmationTests
                     return new HttpResponseMessage(HttpStatusCode.OK) { Content = JsonContent.Create(new { deleted = 0 }) };
                 }
 
+                if (request.Method == HttpMethod.Post && path.EndsWith("/deploy", StringComparison.Ordinal))
+                {
+                    Posts.Add(path);
+                    var job = new DeploymentJob { Id = Guid.NewGuid(), Kind = JobKind.Deploy, Status = JobStatus.Queued, EnqueuedAt = DateTimeOffset.UtcNow };
+                    return new HttpResponseMessage(HttpStatusCode.Created) { Content = JsonContent.Create(job) };
+                }
+
                 if (request.Method == HttpMethod.Get && path.EndsWith("/jobs", StringComparison.Ordinal))
                     return new HttpResponseMessage(HttpStatusCode.OK) { Content = JsonContent.Create(jobs ?? []) };
 
@@ -247,6 +309,7 @@ public sealed class DestructiveConfirmationTests
 
         public FleetApiClient Client { get; }
         public List<string> Deletes { get; } = [];
+        public List<string> Posts { get; } = [];
     }
 
     private sealed class StubHandler(Func<HttpRequestMessage, HttpResponseMessage> response) : HttpMessageHandler

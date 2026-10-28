@@ -83,8 +83,10 @@ public partial class ProjectDetailViewModel : ReactiveObject, IHaveHeader, IDisp
         new(
             Project.Name,
             $"{Project.GitUrl} @ {Project.Branch}",
-            new HeaderAction("Queue Deploy", "mdi-rocket-launch", DeployCommand, isPrimary: true),
             new HeaderAction("Queue Build", "mdi-package-variant-closed", BuildPackagesCommand, isPrimary: true),
+            // Deploying publishes and cannot be undone, so it gets the irreversible style instead of
+            // looking like Queue Build, which only produces packages.
+            new HeaderAction("Queue Deploy", "mdi-rocket-launch", DeployCommand, isDestructive: true),
             new HeaderAction("Clear Builds", "mdi-broom", ClearFinishedJobsCommand),
             new HeaderAction("Refresh", "mdi-refresh", RefreshCommand),
             new HeaderAction("Project Secrets", "mdi-key-outline", OpenSecretsCommand),
@@ -145,6 +147,9 @@ public partial class ProjectDetailViewModel : ReactiveObject, IHaveHeader, IDisp
         Error = null;
         return await clientContext.Require().Bind(async client =>
         {
+            if (!await _dialog.ConfirmDeploy(Project))
+                return;
+
             var job = await client.EnqueueDeployAsync(Project.Id);
             Jobs.Insert(0, new JobViewModel(job, client, _navigator, this, _fileSystemPicker, clientContext: clientContext, notificationService: notificationService));
             RaiseJobHistoryStateChanged();
