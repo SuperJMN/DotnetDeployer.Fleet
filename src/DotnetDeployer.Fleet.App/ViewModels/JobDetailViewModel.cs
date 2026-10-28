@@ -5,9 +5,6 @@ using System.Reactive.Disposables;
 using System.Reactive.Disposables.Fluent;
 using System.Reactive.Linq;
 using System.Reactive.Subjects;
-using Avalonia;
-using Avalonia.Controls.ApplicationLifetimes;
-using Avalonia.Input.Platform;
 using AvaloniaTerminal;
 using CSharpFunctionalExtensions;
 using DynamicData;
@@ -32,6 +29,7 @@ public partial class JobDetailViewModel : ReactiveObject, IHaveHeader, IDisposab
     private readonly INotificationService notificationService;
     private readonly INavigator _navigator;
     private readonly IFileSystemPicker? _fileSystemPicker;
+    private readonly ITextClipboard _clipboard;
     private readonly ProjectDetailViewModel? _parentProject;
     private readonly CompositeDisposable disposables = [];
     private readonly SourceList<LogLine> _logs = new();
@@ -59,6 +57,7 @@ public partial class JobDetailViewModel : ReactiveObject, IHaveHeader, IDisposab
     [Reactive] private DateTimeOffset? _currentPhaseStartedAt;
     [Reactive] private bool _isDetailedLogVisible;
     [Reactive] private string? _workerName;
+    [Reactive] private string _copyResultText = string.Empty;
 
     public ReadOnlyObservableCollection<JobPhaseRowContainer> Phases => _phaseTree.Phases;
     public ObservableCollection<PackageArtifactViewModel> Artifacts { get; } = new();
@@ -90,13 +89,7 @@ public partial class JobDetailViewModel : ReactiveObject, IHaveHeader, IDisposab
         private set => this.RaiseAndSetIfChanged(ref _terminalModel, value);
     }
 
-    public IReadOnlyList<LogSeverity> AvailableSeverities { get; } = new[]
-    {
-        LogSeverity.None,
-        LogSeverity.Info,
-        LogSeverity.Warning,
-        LogSeverity.Error
-    };
+    public IReadOnlyList<SeverityFilterOption> SeverityFilters => SeverityFilterOption.All;
 
     private CancellationTokenSource? _cts;
 
@@ -107,7 +100,8 @@ public partial class JobDetailViewModel : ReactiveObject, IHaveHeader, IDisposab
         INavigator navigator,
         ProjectDetailViewModel? parentProject = null,
         IFileSystemPicker? fileSystemPicker = null,
-        INotificationService notificationService = null!)
+        INotificationService notificationService = null!,
+        ITextClipboard? clipboard = null)
     {
         Job = job;
         _client = client;
@@ -115,6 +109,7 @@ public partial class JobDetailViewModel : ReactiveObject, IHaveHeader, IDisposab
         this.notificationService = notificationService;
         _navigator = navigator;
         _fileSystemPicker = fileSystemPicker;
+        _clipboard = clipboard ?? new AvaloniaTextClipboard();
         _parentProject = parentProject;
         _statusText = FormatStatus(job.Status);
         _errorMessage = job.ErrorMessage;
@@ -129,6 +124,12 @@ public partial class JobDetailViewModel : ReactiveObject, IHaveHeader, IDisposab
             this.WhenAnyValue(x => x.CanCancel));
         RefreshArtifactsCommand.ThrownExceptions.Subscribe(ex => ErrorMessage = ex.Message).DisposeWith(disposables);
         CopyLogsCommand.ThrownExceptions.NotifyWith(this.notificationService, "Cannot copy logs").DisposeWith(disposables);
+        // The confirmation is a passing hint, not something to dismiss.
+        this.WhenAnyValue(x => x.CopyResultText)
+            .Where(text => text.Length > 0)
+            .Throttle(TimeSpan.FromSeconds(4), RxSchedulers.MainThreadScheduler)
+            .Subscribe(_ => CopyResultText = string.Empty)
+            .DisposeWith(disposables);
         RefreshCommand = ReactiveCommand.CreateFromTask(() => RefreshSnapshot(default));
         RefreshCommand.Results().HandleErrorsWith(this.notificationService, Maybe.From("Cannot refresh job")).DisposeWith(disposables);
         currentHeader = CreateHeader();
@@ -411,16 +412,20 @@ public partial class JobDetailViewModel : ReactiveObject, IHaveHeader, IDisposab
         return true;
     }
 
+    /// <summary>
+    /// Copies every log line received so far, whatever the severity filter shows,
+    /// and confirms how many lines were copied.
+    /// </summary>
     private async Task CopyLogsToClipboard()
     {
-        if (Application.Current?.ApplicationLifetime is not IClassicDesktopStyleApplicationLifetime desktop)
-            return;
+        var lines = _logs.Items.Select(l => l.Text).ToList();
+        var copied = await _clipboard.SetText(string.Join(Environment.NewLine, lines));
+        if (copied.IsFailure)
+            throw new InvalidOperationException(copied.Error);
 
-        var clipboard = desktop.MainWindow?.Clipboard;
-        if (clipboard is null) return;
-
-        var text = string.Join(Environment.NewLine, FilteredLogs.Select(l => l.Text));
-        await clipboard.SetTextAsync(text);
+        // Cleared first so copying the same lines again shows the confirmation anew.
+        CopyResultText = string.Empty;
+        CopyResultText = lines.Count == 1 ? "Copied 1 line" : $"Copied {lines.Count} lines";
     }
 
     private async Task CancelJobAsync()
