@@ -444,7 +444,9 @@ public class FleetApiClient
         long TotalMemoryMb = 0,
         string? OperatingSystem = null,
         string? Architecture = null,
-        string? CpuModel = null);
+        string? CpuModel = null,
+        Guid? CurrentJobId = null,
+        string? CurrentJobProjectName = null);
 
     // ── Secrets ───────────────────────────────────────────────────────────────
 

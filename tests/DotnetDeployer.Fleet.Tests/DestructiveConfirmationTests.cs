@@ -263,12 +263,20 @@ public sealed class DestructiveConfirmationTests
     {
         var context = Substitute.For<IConnectedFleetClientContext>();
         context.Require().Returns(Task.FromResult(Maybe.From(Result.Success(api.Client))));
-        var workers = new WorkersViewModel(context, dialog, Substitute.For<INotificationService>());
+        var workers = new WorkersViewModel(context, dialog, Substitute.For<INotificationService>(),
+            Health(), Substitute.For<INavigator>(), Substitute.For<IFileSystemPicker>());
         var info = new FleetApiClient.WorkerInfo(Guid.NewGuid(), name, status, IsEmbedded: false, LastSeenAt: null,
             MaxDiskUsageGb: 10, RepoStoragePath: null);
         worker = new WorkerItemViewModel(info, api.Client, workers, Substitute.For<INotificationService>());
         workers.Workers.Add(worker);
         return workers;
+    }
+
+    private static IBackendHealthMonitor Health()
+    {
+        var health = Substitute.For<IBackendHealthMonitor>();
+        health.Snapshots.Returns(Observable.Never<BackendHealthSnapshot>());
+        return health;
     }
 
     private static DeploymentJob Job(Guid projectId, JobStatus status) => new()

@@ -42,18 +42,30 @@ public static class WorkerEndpoints
     private static async Task<IResult> GetAll(IFleetStorage storage)
     {
         var workers = await storage.GetWorkersAsync();
-        return Results.Ok(workers.Select(w => new
+        var projectNames = (await storage.GetProjectsAsync()).ToDictionary(p => p.Id, p => p.Name);
+
+        var summaries = new List<WorkerSummary>(workers.Count);
+        foreach (var w in workers)
         {
-            w.Id, w.Name, w.Status, w.IsEmbedded, w.LastSeenAt,
-            maxDiskUsageGb = w.MaxDiskUsageBytes / (1024.0 * 1024 * 1024),
-            w.RepoStoragePath,
-            w.Version,
-            w.ProcessorCount,
-            w.TotalMemoryMb,
-            w.OperatingSystem,
-            w.Architecture,
-            w.CpuModel
-        }));
+            // The job the worker is building right now, so the UI can link a Busy worker to it.
+            var running = (await storage.GetActiveJobsForWorkerAsync(w.Id))
+                .FirstOrDefault(j => j.Status == JobStatus.Running);
+
+            summaries.Add(new WorkerSummary(
+                w.Id, w.Name, w.Status, w.IsEmbedded, w.LastSeenAt,
+                MaxDiskUsageGb: w.MaxDiskUsageBytes / (1024.0 * 1024 * 1024),
+                w.RepoStoragePath,
+                w.Version,
+                w.ProcessorCount,
+                w.TotalMemoryMb,
+                w.OperatingSystem,
+                w.Architecture,
+                w.CpuModel,
+                CurrentJobId: running?.Id,
+                CurrentJobProjectName: running is null ? null : projectNames.GetValueOrDefault(running.ProjectId)));
+        }
+
+        return Results.Ok(summaries);
     }
 
     private static async Task<IResult> Register(
@@ -268,6 +280,22 @@ public static class WorkerEndpoints
         string? OperatingSystem = null,
         string? Architecture = null,
         string? CpuModel = null);
+    public record WorkerSummary(
+        Guid Id,
+        string Name,
+        WorkerStatus Status,
+        bool IsEmbedded,
+        DateTimeOffset? LastSeenAt,
+        double MaxDiskUsageGb,
+        string? RepoStoragePath,
+        string? Version,
+        int ProcessorCount,
+        long TotalMemoryMb,
+        string? OperatingSystem,
+        string? Architecture,
+        string? CpuModel,
+        Guid? CurrentJobId,
+        string? CurrentJobProjectName);
     public record UpdateWorkerConfigRequest(double? MaxDiskUsageGb, string? RepoStoragePath);
     public record WorkerLoginRequest(Guid WorkerId, string Secret);
     public record UpdateWorkerStatusRequest(WorkerStatus Status);
