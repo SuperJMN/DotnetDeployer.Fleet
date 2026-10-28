@@ -82,7 +82,6 @@ public partial class WorkersViewModel : ReactiveObject, IHaveHeader, IDisposable
     public AutoRefresh AutoRefresh { get; }
     public ReactiveCommand<WorkerItemViewModel, Maybe<Result>> OpenCurrentJobCommand { get; }
     public IObservable<object> Header { get; }
-    internal INotificationService Notifications => _notificationService;
     public void Dispose() => _disposables.Dispose();
 
     private async Task<Maybe<Result>> LoadAsync()
@@ -203,7 +202,7 @@ public partial class WorkerItemViewModel : ReactiveObject
             () => parent.OpenCurrentJobCommand.Execute(this).Select(_ => Unit.Default),
             this.WhenAnyValue(vm => vm.Worker, current => current.CurrentJobId is not null));
 
-        SaveConfigCommand.HandleErrorsWith(notificationService, Maybe.From("Cannot save the worker settings"));
+        SaveConfigCommand.HandleErrorsWith(notificationService, Maybe.From("Cannot save worker settings"));
 
         // The "Saved" confirmation belongs to the saved value: editing it again clears it.
         this.WhenAnyValue(vm => vm.MaxDiskUsageGb)

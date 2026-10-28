@@ -82,7 +82,7 @@ public sealed class AutoRefreshTests
     {
         var context = Substitute.For<IConnectedFleetClientContext>();
         var scheduler = new TestScheduler();
-        using var vm = new WorkersViewModel(context, Substitute.For<IDialog>(), Substitute.For<INotificationService>(), scheduler);
+        using var vm = new WorkersViewModel(context, Substitute.For<IDialog>(), Substitute.For<INotificationService>(), QuietHealth(), Substitute.For<INavigator>(), Substitute.For<IFileSystemPicker>(), autoRefreshScheduler: scheduler);
         await vm.AutoRefresh.StartCommand.Execute().FirstAsync();
 
         scheduler.AdvanceBy(AutoRefresh.DefaultPeriod.Ticks * 3);
@@ -117,7 +117,7 @@ public sealed class AutoRefreshTests
         var coordinator = new FakeCoordinator { Workers = [worker] };
         var scheduler = new TestScheduler();
         using var vm = new WorkersViewModel(Connected(coordinator.Client), Substitute.For<IDialog>(),
-            Substitute.For<INotificationService>(), scheduler);
+            Substitute.For<INotificationService>(), QuietHealth(), Substitute.For<INavigator>(), Substitute.For<IFileSystemPicker>(), autoRefreshScheduler: scheduler);
         await vm.RefreshCommand.Execute().FirstAsync();
         await vm.AutoRefresh.StartCommand.Execute().FirstAsync();
 
@@ -136,7 +136,7 @@ public sealed class AutoRefreshTests
         var coordinator = new FakeCoordinator { Workers = [worker] };
         var notifications = Substitute.For<INotificationService>();
         var scheduler = new TestScheduler();
-        using var vm = new WorkersViewModel(Connected(coordinator.Client), Substitute.For<IDialog>(), notifications, scheduler);
+        using var vm = new WorkersViewModel(Connected(coordinator.Client), Substitute.For<IDialog>(), notifications, QuietHealth(), Substitute.For<INavigator>(), Substitute.For<IFileSystemPicker>(), autoRefreshScheduler: scheduler);
         await vm.RefreshCommand.Execute().FirstAsync();
         await vm.AutoRefresh.StartCommand.Execute().FirstAsync();
 
@@ -250,5 +250,12 @@ public sealed class AutoRefreshTests
     {
         protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken) =>
             Task.FromResult(response(request));
+    }
+
+    private static IBackendHealthMonitor QuietHealth()
+    {
+        var health = Substitute.For<IBackendHealthMonitor>();
+        health.Snapshots.Returns(Observable.Never<BackendHealthSnapshot>());
+        return health;
     }
 }

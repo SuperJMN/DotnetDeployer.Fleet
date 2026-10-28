@@ -190,7 +190,7 @@ public sealed class WorkersViewModelTests
         new(version is null ? BackendHealth.Unreachable : BackendHealth.Healthy, null, DateTimeOffset.UtcNow, version, null, null);
 
     private static WorkerItemViewModel Item(FakeApi api, FleetApiClient.WorkerInfo info) =>
-        new(info, api.Client, Workers(api));
+        new(info, api.Client, Workers(api), Substitute.For<INotificationService>());
 
     private static WorkersViewModel Workers(
         FakeApi api,
