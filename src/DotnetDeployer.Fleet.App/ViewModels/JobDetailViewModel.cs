@@ -518,7 +518,7 @@ public partial class JobDetailViewModel : ReactiveObject, IHaveHeader, IDisposab
                 parts.Add("Streaming");
 
             if (Job.EnqueuedAt != default)
-                parts.Add($"Queued: {Job.EnqueuedAt:g}");
+                parts.Add($"Queued: {LocalTimestampFormatter.Format(Job.EnqueuedAt)}");
 
             return string.Join(" | ", parts);
         }
