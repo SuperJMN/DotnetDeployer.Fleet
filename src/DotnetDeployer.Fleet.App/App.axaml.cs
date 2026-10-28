@@ -7,6 +7,7 @@ using Avalonia.Threading;
 using DotnetDeployer.Fleet.Api.Client;
 using DotnetDeployer.Fleet.App.Dialogs;
 using DotnetDeployer.Fleet.App.Shell;
+using DotnetDeployer.Fleet.App.Theming;
 using DotnetDeployer.Fleet.App.ViewModels;
 using Microsoft.Extensions.DependencyInjection;
 using Serilog;
@@ -42,11 +43,15 @@ public class App : Application
 
         var fleetClient = new FleetApiClient(httpHandler, streamingHandler, unauthorizedSignal);
         services.AddSingleton(fleetClient);
-        services.AddSingleton<ISettingsService>(
-            OperatingSystem.IsBrowser() ? new InMemorySettingsService() : new FileSettingsService());
+        ISettingsService settings = OperatingSystem.IsBrowser() ? new InMemorySettingsService() : new FileSettingsService();
+        IThemeApplier themeApplier = new ApplicationThemeApplier(this);
+        themeApplier.Apply(settings.GetTheme());
+        services.AddSingleton(settings);
+        services.AddSingleton(themeApplier);
         services.AddSingleton<IPackageTargetSelectionStore>(
             OperatingSystem.IsBrowser() ? new InMemoryPackageTargetSelectionStore() : new FilePackageTargetSelectionStore());
         services.AddSingleton<IBackendHealthMonitor, BackendHealthMonitor>();
+        services.AddSingleton(sp => new BackendStatusViewModel(sp.GetRequiredService<IBackendHealthMonitor>()));
 
         services.AddSingleton<IShell, Zafiro.UI.Shell.Shell>();
         services.AddScoped<INavigator>(sp =>

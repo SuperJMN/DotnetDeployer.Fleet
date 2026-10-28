@@ -2,6 +2,7 @@
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              xmlns:vm="clr-namespace:DotnetDeployer.Fleet.App.ViewModels"
              xmlns:icons="clr-namespace:Optris.Icons.Avalonia;assembly=Optris.Icons.Avalonia"
+             xmlns:theming="clr-namespace:DotnetDeployer.Fleet.App.Theming"
              x:Class="DotnetDeployer.Fleet.App.Views.WorkersView"
              x:DataType="vm:WorkersViewModel">
 
@@ -54,7 +55,7 @@
                                                     IsVisible="{Binding Worker.Version, Converter={x:Static ObjectConverters.IsNotNull}}">
                                             <ContentControl Content="{Icon mdi-alert}"
                                                             IconOptions.Size="13"
-                                                            IconOptions.Fill="#F0B72F"
+                                                            IconOptions.Fill="{DynamicResource ToneWarningBrush}"
                                                             VerticalAlignment="Center"
                                                             ToolTip.Tip="{Binding VersionMismatchMessage}"
                                                             IsVisible="{Binding VersionDiffers}" />
@@ -71,7 +72,15 @@
                                                IsVisible="{Binding CapabilityLabel, Converter={x:Static StringConverters.IsNotNullOrEmpty}}"
                                                FontSize="11" Opacity="0.7" />
                                     <FlexPanel Wrap="Wrap" Gap="8" AlignItems="Center">
-                                        <TextBlock Text="{Binding StatusLabel}" FontSize="12" />
+                                        <StackPanel Orientation="Horizontal" Spacing="4"
+                                                    VerticalAlignment="Center"
+                                                    theming:Toned.Tone="{Binding StatusTone}">
+                                            <ContentControl Content="{Binding StatusIcon}"
+                                                            IconOptions.Size="13"
+                                                            VerticalAlignment="Center" />
+                                            <TextBlock Text="{Binding StatusLabel}" FontSize="12"
+                                                       VerticalAlignment="Center" />
+                                        </StackPanel>
                                         <HyperlinkButton Padding="0"
                                                          FontSize="12"
                                                          Content="{Binding CurrentJobLabel}"
@@ -102,7 +111,7 @@
                                                 IsVisible="{Binding IsSaved}">
                                         <ContentControl Content="{Icon mdi-check}"
                                                         IconOptions.Size="13"
-                                                        IconOptions.Fill="#43A047"
+                                                        IconOptions.Fill="{DynamicResource ToneSuccessBrush}"
                                                         VerticalAlignment="Center" />
                                         <TextBlock Text="Saved" FontSize="11" Opacity="0.7"
                                                    VerticalAlignment="Center" />

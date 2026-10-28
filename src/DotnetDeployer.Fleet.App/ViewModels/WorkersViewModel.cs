@@ -233,6 +233,8 @@ public partial class WorkerItemViewModel : ReactiveObject
 
         this.RaisePropertyChanged(nameof(Worker));
         this.RaisePropertyChanged(nameof(StatusLabel));
+        this.RaisePropertyChanged(nameof(StatusIcon));
+        this.RaisePropertyChanged(nameof(StatusTone));
         this.RaisePropertyChanged(nameof(EmbeddedLabel));
         this.RaisePropertyChanged(nameof(CapabilityLabel));
         this.RaisePropertyChanged(nameof(DisplayVersion));
@@ -242,12 +244,22 @@ public partial class WorkerItemViewModel : ReactiveObject
         this.RaisePropertyChanged(nameof(CurrentJobLabel));
     }
 
-    public string StatusLabel => Worker.Status switch
+    public string StatusLabel => Worker.Status.ToString();
+
+    public IIcon StatusIcon => new Icon(Worker.Status switch
     {
-        Core.Domain.WorkerStatus.Online => "🟢 Online",
-        Core.Domain.WorkerStatus.Busy => "🔵 Busy",
-        Core.Domain.WorkerStatus.Offline => "🔴 Offline",
-        _ => Worker.Status.ToString()
+        Core.Domain.WorkerStatus.Online => "mdi-check-circle",
+        Core.Domain.WorkerStatus.Busy => "mdi-progress-wrench",
+        Core.Domain.WorkerStatus.Offline => "mdi-close-circle",
+        _ => "mdi-help-circle-outline"
+    });
+
+    public Tone StatusTone => Worker.Status switch
+    {
+        Core.Domain.WorkerStatus.Online => Tone.Success,
+        Core.Domain.WorkerStatus.Busy => Tone.Info,
+        Core.Domain.WorkerStatus.Offline => Tone.Danger,
+        _ => Tone.Neutral
     };
 
     public string EmbeddedLabel => Worker.IsEmbedded ? "(embedded)" : string.Empty;

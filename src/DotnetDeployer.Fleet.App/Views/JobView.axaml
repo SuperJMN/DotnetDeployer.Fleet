@@ -2,6 +2,7 @@
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              xmlns:vm="clr-namespace:DotnetDeployer.Fleet.App.ViewModels"
              xmlns:converters="clr-namespace:DotnetDeployer.Fleet.App.Converters"
+             xmlns:theming="clr-namespace:DotnetDeployer.Fleet.App.Theming"
              x:Class="DotnetDeployer.Fleet.App.Views.JobView"
              x:DataType="vm:JobViewModel">
 
@@ -34,13 +35,12 @@
             </Panel>
 
             <!-- Fixed width keeps the details column aligned across rows on wide screens. -->
-            <FlexPanel Width="210" Gap="6" AlignItems="Center" FlexPanel.Shrink="0">
+            <FlexPanel Width="210" Gap="6" AlignItems="Center" FlexPanel.Shrink="0"
+                       theming:Toned.Tone="{Binding StatusTone}">
                 <ContentControl Content="{Binding StatusIcon}"
-                                IconOptions.Fill="{Binding StatusBrush}"
                                 IconOptions.Size="16"
                                 FlexPanel.Shrink="0" />
                 <TextBlock Text="{Binding StatusText}"
-                           Foreground="{Binding StatusBrush}"
                            FontWeight="SemiBold"
                            TextWrapping="Wrap" />
             </FlexPanel>

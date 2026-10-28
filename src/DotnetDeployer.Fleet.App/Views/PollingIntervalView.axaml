@@ -21,7 +21,7 @@
                    Opacity="0.5" FontSize="11" TextWrapping="Wrap" />
 
         <TextBlock Text="{Binding Error}"
-                   Foreground="Red"
+                   Foreground="{DynamicResource ToneDangerBrush}"
                    IsVisible="{Binding Error, Converter={x:Static ObjectConverters.IsNotNull}}"
                    TextWrapping="Wrap" />
     </StackPanel>

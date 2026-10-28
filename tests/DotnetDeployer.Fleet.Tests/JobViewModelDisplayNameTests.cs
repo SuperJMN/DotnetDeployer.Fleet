@@ -112,4 +112,28 @@ public class JobViewModelDisplayNameTests
 
         vm.ElapsedText.Should().Be("2:05");
     }
+
+    [Theory]
+    [InlineData(JobStatus.Queued, Tone.Neutral)]
+    [InlineData(JobStatus.Running, Tone.Info)]
+    [InlineData(JobStatus.Succeeded, Tone.Success)]
+    [InlineData(JobStatus.Failed, Tone.Danger)]
+    [InlineData(JobStatus.Cancelled, Tone.Warning)]
+    public void StatusTone_reflects_the_job_status(JobStatus status, Tone expected)
+    {
+        var vm = BuildVm(new DeploymentJob { Id = Guid.NewGuid(), Status = status });
+
+        vm.StatusTone.Should().Be(expected);
+    }
+
+    [Fact]
+    public void StatusTone_follows_job_updates()
+    {
+        var job = new DeploymentJob { Id = Guid.NewGuid(), Status = JobStatus.Running };
+        var vm = BuildVm(job);
+
+        vm.ApplyJobUpdate(new DeploymentJob { Id = job.Id, Status = JobStatus.Failed });
+
+        vm.StatusTone.Should().Be(Tone.Danger);
+    }
 }

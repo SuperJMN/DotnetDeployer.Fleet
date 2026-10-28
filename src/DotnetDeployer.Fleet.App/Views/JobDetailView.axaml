@@ -2,6 +2,7 @@
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              xmlns:vm="clr-namespace:DotnetDeployer.Fleet.App.ViewModels"
              xmlns:terminal="using:AvaloniaTerminal"
+             xmlns:theming="clr-namespace:DotnetDeployer.Fleet.App.Theming"
              x:Class="DotnetDeployer.Fleet.App.Views.JobDetailView"
              x:DataType="vm:JobDetailViewModel">
 
@@ -16,16 +17,19 @@
         <!-- Error banner: shown when the job has an ErrorMessage (Failed/Cancelled). -->
         <Border DockPanel.Dock="Top"
                 IsVisible="{Binding HasError}"
-                Background="#3A1F1F"
-                BorderBrush="#8B2C2C"
+                Background="{DynamicResource ToneDangerBackgroundBrush}"
+                BorderBrush="{DynamicResource ToneDangerBorderBrush}"
                 BorderThickness="1"
                 CornerRadius="4"
                 Padding="12"
                 Margin="0,0,0,8">
             <Grid ColumnDefinitions="Auto,*,Auto" ColumnSpacing="10">
-                <TextBlock Text="❌" FontSize="18" VerticalAlignment="Top" />
+                <ContentControl Content="{Icon mdi-alert-circle}"
+                                IconOptions.Size="20"
+                                IconOptions.Fill="{DynamicResource ToneDangerBrush}"
+                                VerticalAlignment="Top" />
                 <StackPanel Grid.Column="1" Spacing="2">
-                    <TextBlock Text="Job error" FontWeight="SemiBold" Foreground="#FF6B6B" />
+                    <TextBlock Text="Job error" FontWeight="SemiBold" Foreground="{DynamicResource ToneDangerBrush}" />
                     <TextBlock Text="{Binding ErrorMessage}" TextWrapping="Wrap" />
                 </StackPanel>
                 <EnhancedButton Grid.Column="2"
@@ -40,14 +44,17 @@
         <!-- NuGet verification: published packages are checked after the job succeeds. -->
         <Border DockPanel.Dock="Top"
                 IsVisible="{Binding IsNuGetVerificationPending}"
-                Background="#1F2A3A"
-                BorderBrush="#3A5A8A"
+                Background="{DynamicResource ToneInfoBackgroundBrush}"
+                BorderBrush="{DynamicResource ToneInfoBorderBrush}"
                 BorderThickness="1"
                 CornerRadius="4"
                 Padding="12"
                 Margin="0,0,0,8">
             <StackPanel Orientation="Horizontal" Spacing="10">
-                <TextBlock Text="⏳" FontSize="18" VerticalAlignment="Top" />
+                <ContentControl Content="{Icon mdi-progress-clock}"
+                                IconOptions.Size="20"
+                                IconOptions.Fill="{DynamicResource ToneInfoBrush}"
+                                VerticalAlignment="Top" />
                 <StackPanel Spacing="2">
                     <TextBlock Text="NuGet packages published" FontWeight="SemiBold" />
                     <TextBlock Text="Fleet is verifying that NuGet serves exactly the pushed packages once they are indexed. This can take a few minutes and does not affect the release."
@@ -58,16 +65,19 @@
 
         <Border DockPanel.Dock="Top"
                 IsVisible="{Binding IsNuGetVerified}"
-                Background="#1F3A24"
-                BorderBrush="#2E7D32"
+                Background="{DynamicResource ToneSuccessBackgroundBrush}"
+                BorderBrush="{DynamicResource ToneSuccessBorderBrush}"
                 BorderThickness="1"
                 CornerRadius="4"
                 Padding="12"
                 Margin="0,0,0,8">
             <StackPanel Orientation="Horizontal" Spacing="10">
-                <TextBlock Text="✅" FontSize="18" VerticalAlignment="Top" />
+                <ContentControl Content="{Icon mdi-check-decagram}"
+                                IconOptions.Size="20"
+                                IconOptions.Fill="{DynamicResource ToneSuccessBrush}"
+                                VerticalAlignment="Top" />
                 <StackPanel Spacing="2">
-                    <TextBlock Text="NuGet packages verified" FontWeight="SemiBold" Foreground="#81C784" />
+                    <TextBlock Text="NuGet packages verified" FontWeight="SemiBold" Foreground="{DynamicResource ToneSuccessBrush}" />
                     <TextBlock Text="Every published package is downloadable and identical to what Fleet pushed."
                                TextWrapping="Wrap" Opacity="0.8" />
                 </StackPanel>
@@ -77,14 +87,17 @@
         <!-- Current phase badge: shown while a phase is in flight -->
         <Border DockPanel.Dock="Top"
                 IsVisible="{Binding HasCurrentPhase}"
-                Background="#1F2A3A"
-                BorderBrush="#3A5A8A"
+                Background="{DynamicResource ToneInfoBackgroundBrush}"
+                BorderBrush="{DynamicResource ToneInfoBorderBrush}"
                 BorderThickness="1"
                 CornerRadius="4"
                 Padding="10,6"
                 Margin="0,0,0,8">
             <FlexPanel Wrap="Wrap" Gap="8" AlignItems="Center">
-                <TextBlock Text="🔧" FontSize="14" VerticalAlignment="Center" />
+                <ContentControl Content="{Icon mdi-wrench}"
+                                IconOptions.Size="14"
+                                IconOptions.Fill="{DynamicResource ToneInfoBrush}"
+                                VerticalAlignment="Center" />
                 <TextBlock Text="Current phase:" FontWeight="SemiBold"
                            VerticalAlignment="Center" Opacity="0.8" />
                 <TextBlock Text="{Binding CurrentPhaseDisplay}"
@@ -145,7 +158,11 @@
                             <TreeView.ItemTemplate>
                                 <TreeDataTemplate x:DataType="vm:JobPhaseRowContainer" ItemsSource="{Binding Content.Children}">
                                     <Grid ColumnDefinitions="Auto,*,Auto" Margin="0,2">
-                                        <TextBlock Grid.Column="0" Text="{Binding Content.Icon}" Margin="0,0,8,0" />
+                                        <ContentControl Grid.Column="0" Content="{Binding Content.Icon}"
+                                                        theming:Toned.Tone="{Binding Content.Tone}"
+                                                        IconOptions.Size="14"
+                                                        VerticalAlignment="Center"
+                                                        Margin="0,0,8,0" />
                                         <TextBlock Grid.Column="1" Text="{Binding Content.DisplayName}"
                                                    TextTrimming="CharacterEllipsis" />
                                         <TextBlock Grid.Column="2" Text="{Binding Content.DurationText}"

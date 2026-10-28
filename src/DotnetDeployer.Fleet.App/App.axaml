@@ -4,8 +4,44 @@
              xmlns:icons="clr-namespace:Optris.Icons.Avalonia;assembly=Optris.Icons.Avalonia"
              xmlns:vm="clr-namespace:DotnetDeployer.Fleet.App.ViewModels"
              xmlns:zac="clr-namespace:Zafiro.Avalonia.Controls;assembly=Zafiro.Avalonia"
-             x:Class="DotnetDeployer.Fleet.App.App"
-             RequestedThemeVariant="Dark">
+             x:Class="DotnetDeployer.Fleet.App.App">
+
+    <!-- Status colours per theme. Each tone has a foreground for text and icons, plus a
+         background and a border for callouts. Theming.Toned picks Tone{Tone}Brush by name. -->
+    <Application.Resources>
+        <ResourceDictionary>
+            <ResourceDictionary.ThemeDictionaries>
+                <ResourceDictionary x:Key="Light">
+                    <SolidColorBrush x:Key="ToneNeutralBrush" Color="#57606A" />
+                    <SolidColorBrush x:Key="ToneInfoBrush" Color="#0969DA" />
+                    <SolidColorBrush x:Key="ToneSuccessBrush" Color="#1A7F37" />
+                    <SolidColorBrush x:Key="ToneWarningBrush" Color="#9A6700" />
+                    <SolidColorBrush x:Key="ToneDangerBrush" Color="#CF222E" />
+
+                    <SolidColorBrush x:Key="ToneInfoBackgroundBrush" Color="#DDF4FF" />
+                    <SolidColorBrush x:Key="ToneInfoBorderBrush" Color="#54AEFF" />
+                    <SolidColorBrush x:Key="ToneSuccessBackgroundBrush" Color="#DAFBE1" />
+                    <SolidColorBrush x:Key="ToneSuccessBorderBrush" Color="#4AC26B" />
+                    <SolidColorBrush x:Key="ToneDangerBackgroundBrush" Color="#FFEBE9" />
+                    <SolidColorBrush x:Key="ToneDangerBorderBrush" Color="#FF8182" />
+                </ResourceDictionary>
+                <ResourceDictionary x:Key="Dark">
+                    <SolidColorBrush x:Key="ToneNeutralBrush" Color="#8B949E" />
+                    <SolidColorBrush x:Key="ToneInfoBrush" Color="#58A6FF" />
+                    <SolidColorBrush x:Key="ToneSuccessBrush" Color="#3FB950" />
+                    <SolidColorBrush x:Key="ToneWarningBrush" Color="#F0B72F" />
+                    <SolidColorBrush x:Key="ToneDangerBrush" Color="#F85149" />
+
+                    <SolidColorBrush x:Key="ToneInfoBackgroundBrush" Color="#1F2A3A" />
+                    <SolidColorBrush x:Key="ToneInfoBorderBrush" Color="#3A5A8A" />
+                    <SolidColorBrush x:Key="ToneSuccessBackgroundBrush" Color="#1F3A24" />
+                    <SolidColorBrush x:Key="ToneSuccessBorderBrush" Color="#2E7D32" />
+                    <SolidColorBrush x:Key="ToneDangerBackgroundBrush" Color="#3A1F1F" />
+                    <SolidColorBrush x:Key="ToneDangerBorderBrush" Color="#8B2C2C" />
+                </ResourceDictionary>
+            </ResourceDictionary.ThemeDictionaries>
+        </ResourceDictionary>
+    </Application.Resources>
 
     <Application.Styles>
         <FluentTheme />

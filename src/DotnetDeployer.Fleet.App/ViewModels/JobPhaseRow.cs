@@ -15,7 +15,8 @@ namespace DotnetDeployer.Fleet.App.ViewModels;
 public sealed class JobPhaseRow : ReactiveObject
 {
     private readonly Func<string, string> formatName;
-    private string icon = "";
+    private IIcon icon = new Icon();
+    private Tone tone;
     private string displayName = "";
     private string durationText = "";
 
@@ -32,10 +33,16 @@ public sealed class JobPhaseRow : ReactiveObject
     public Guid Id { get; private set; }
     public DateTimeOffset StartedAt { get; private set; }
     public DateTimeOffset EndedSort { get; private set; }
-    public string Icon
+    public IIcon Icon
     {
         get => icon;
         private set => this.RaiseAndSetIfChanged(ref icon, value);
+    }
+
+    public Tone Tone
+    {
+        get => tone;
+        private set => this.RaiseAndSetIfChanged(ref tone, value);
     }
 
     public string DisplayName
@@ -58,15 +65,18 @@ public sealed class JobPhaseRow : ReactiveObject
         Id = phase.Id;
         StartedAt = phase.StartedAt;
         EndedSort = phase.EndedAt ?? DateTimeOffset.MaxValue;
-        Icon = phase.EndedAt is null
-            ? "⏳"
+        var (iconCode, phaseTone) = phase.EndedAt is null
+            ? ("mdi-progress-clock", Tone.Info)
             : phase.Status switch
             {
-                PhaseStatus.Ok => "✅",
-                PhaseStatus.Fail => "❌",
-                PhaseStatus.Waiting => "⏳",
-                _ => "•"
+                PhaseStatus.Ok => ("mdi-check-circle", Tone.Success),
+                PhaseStatus.Fail => ("mdi-close-circle", Tone.Danger),
+                PhaseStatus.Waiting => ("mdi-progress-clock", Tone.Info),
+                _ => ("mdi-circle-small", Tone.Neutral)
             };
+        if (Icon.Source != iconCode)
+            Icon = new Icon(iconCode);
+        Tone = phaseTone;
 
         // Same format as the job's elapsed time so phases and totals read alike.
         DurationText = phase.DurationMs switch

@@ -182,6 +182,26 @@ public sealed class JobDetailViewModelHeaderTests
         return true;
     }
 
+    [Fact]
+    public async Task Status_ShouldBeShownWithAnIconAndAToneInsteadOfAnEmoji()
+    {
+        var job = new DeploymentJob
+        {
+            Id = Guid.NewGuid(),
+            Status = JobStatus.Failed,
+            EnqueuedAt = DateTimeOffset.UtcNow.AddMinutes(-2),
+            FinishedAt = DateTimeOffset.UtcNow
+        };
+        using var vm = CreateViewModel(job);
+
+        var header = (SectionHeader)await vm.Header.FirstAsync();
+
+        vm.StatusText.Should().Be("Failed");
+        vm.StatusIcon.Source.Should().Be("mdi-alert-circle");
+        vm.StatusTone.Should().Be(Tone.Danger);
+        header.Subtitle.Should().StartWith("Status: Failed |");
+    }
+
     private static DeploymentJob FinishedJob(JobStatus status) => new()
     {
         Id = Guid.NewGuid(),

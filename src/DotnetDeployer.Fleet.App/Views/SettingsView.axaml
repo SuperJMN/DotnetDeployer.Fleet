@@ -1,23 +1,103 @@
 <UserControl xmlns="https://github.com/avaloniaui"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              xmlns:vm="clr-namespace:DotnetDeployer.Fleet.App.ViewModels"
+             xmlns:theming="clr-namespace:DotnetDeployer.Fleet.App.Theming"
              x:Class="DotnetDeployer.Fleet.App.Views.SettingsView"
              x:DataType="vm:SettingsViewModel">
+
+    <UserControl.Styles>
+        <Style Selector="Border.Card">
+            <Setter Property="Padding" Value="12" />
+            <Setter Property="Background" Value="{DynamicResource SystemControlBackgroundAltHighBrush}" />
+            <Setter Property="BorderBrush" Value="{DynamicResource SystemControlForegroundBaseLowBrush}" />
+            <Setter Property="BorderThickness" Value="1" />
+            <Setter Property="CornerRadius" Value="6" />
+        </Style>
+        <Style Selector="TextBlock.CardTitle">
+            <Setter Property="FontWeight" Value="SemiBold" />
+            <Setter Property="FontSize" Value="14" />
+        </Style>
+        <Style Selector="TextBlock.Caption">
+            <Setter Property="FontSize" Value="11" />
+            <Setter Property="Opacity" Value="0.7" />
+        </Style>
+    </UserControl.Styles>
 
     <ScrollViewer HorizontalScrollBarVisibility="Disabled">
         <BalancedWrapGrid Margin="16"
                           MinItemWidth="280"
                           HorizontalSpacing="8"
                           VerticalSpacing="8">
-            <Border Padding="12"
-                    Background="{DynamicResource SystemControlBackgroundAltHighBrush}"
-                    BorderBrush="{DynamicResource SystemControlForegroundBaseLowBrush}"
-                    BorderThickness="1"
-                    CornerRadius="6">
+
+            <Border Classes="Card">
                 <StackPanel Spacing="12">
-                    <TextBlock Text="Session"
-                               FontWeight="SemiBold"
-                               FontSize="14" />
+                    <TextBlock Text="Coordinator" Classes="CardTitle" />
+                    <StackPanel Spacing="2">
+                        <TextBlock Text="Endpoint" Classes="Caption" />
+                        <SelectableTextBlock Text="{Binding Backend.EndpointText}"
+                                             TextWrapping="Wrap" />
+                    </StackPanel>
+                    <StackPanel Spacing="2">
+                        <TextBlock Text="Status" Classes="Caption" />
+                        <StackPanel Orientation="Horizontal" Spacing="8">
+                            <Ellipse Width="10" Height="10"
+                                     VerticalAlignment="Center"
+                                     theming:Toned.Tone="{Binding Backend.HealthTone}" />
+                            <TextBlock Text="{Binding Backend.HealthLabel}" VerticalAlignment="Center" />
+                        </StackPanel>
+                        <TextBlock Text="{Binding Backend.Message}"
+                                   Classes="Caption"
+                                   TextWrapping="Wrap"
+                                   IsVisible="{Binding Backend.Message, Converter={x:Static ObjectConverters.IsNotNull}}" />
+                    </StackPanel>
+                    <EnhancedButton Content="Change endpoint…"
+                                    Icon="{Icon mdi-swap-horizontal}"
+                                    HorizontalAlignment="Left"
+                                    Command="{Binding ChangeEndpointCommand}" />
+                </StackPanel>
+            </Border>
+
+            <Border Classes="Card">
+                <StackPanel Spacing="12">
+                    <TextBlock Text="Appearance" Classes="CardTitle" />
+                    <StackPanel Spacing="4">
+                        <TextBlock Text="Theme" Classes="Caption" />
+                        <ComboBox ItemsSource="{Binding Themes}"
+                                  SelectedItem="{Binding SelectedTheme}"
+                                  MinWidth="160" />
+                    </StackPanel>
+                </StackPanel>
+            </Border>
+
+            <Border Classes="Card">
+                <StackPanel Spacing="12">
+                    <TextBlock Text="About" Classes="CardTitle" />
+                    <Grid ColumnDefinitions="Auto,*" RowDefinitions="Auto,Auto" ColumnSpacing="12" RowSpacing="6">
+                        <TextBlock Grid.Row="0" Grid.Column="0" Text="App" Classes="Caption" VerticalAlignment="Center" />
+                        <SelectableTextBlock Grid.Row="0" Grid.Column="1"
+                                             Text="{Binding Backend.AppDisplayVersion, TargetNullValue='Unknown'}"
+                                             ToolTip.Tip="{Binding Backend.AppVersion}" />
+                        <TextBlock Grid.Row="1" Grid.Column="0" Text="Coordinator" Classes="Caption" VerticalAlignment="Center" />
+                        <SelectableTextBlock Grid.Row="1" Grid.Column="1"
+                                             Text="{Binding Backend.DisplayVersion, TargetNullValue='Unknown'}"
+                                             ToolTip.Tip="{Binding Backend.Version}" />
+                    </Grid>
+                    <DockPanel IsVisible="{Binding Backend.VersionsDiffer}">
+                        <ContentControl DockPanel.Dock="Left"
+                                        Margin="0,0,6,0"
+                                        Content="{Icon mdi-alert}"
+                                        IconOptions.Size="14"
+                                        IconOptions.Fill="{DynamicResource ToneWarningBrush}"
+                                        VerticalAlignment="Top" />
+                        <TextBlock Text="{Binding Backend.VersionMismatchMessage}"
+                                   TextWrapping="Wrap" FontSize="12" />
+                    </DockPanel>
+                </StackPanel>
+            </Border>
+
+            <Border Classes="Card">
+                <StackPanel Spacing="12">
+                    <TextBlock Text="Session" Classes="CardTitle" />
                     <EnhancedButton Content="Sign out"
                                     Icon="{Icon mdi-logout}"
                                     Classes="Destructive"
