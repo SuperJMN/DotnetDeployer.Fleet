@@ -40,6 +40,7 @@ public partial class JobDetailViewModel : ReactiveObject, IHaveHeader, IDisposab
     private readonly BehaviorSubject<object> _header;
     private LogTerminalFeed? _terminalFeed;
     private TerminalControlModel? _terminalModel;
+    private SectionHeader currentHeader;
     private bool isDisposed;
 
     public DeploymentJob Job { get; private set; }
@@ -124,7 +125,8 @@ public partial class JobDetailViewModel : ReactiveObject, IHaveHeader, IDisposab
         CopyLogsCommand.ThrownExceptions.NotifyWith(this.notificationService, "Cannot copy logs").DisposeWith(disposables);
         RefreshCommand = ReactiveCommand.CreateFromTask(() => RefreshSnapshot(default));
         RefreshCommand.Results().HandleErrorsWith(this.notificationService, Maybe.From("Cannot refresh job")).DisposeWith(disposables);
-        _header = new BehaviorSubject<object>(CreateHeader());
+        currentHeader = CreateHeader();
+        _header = new BehaviorSubject<object>(currentHeader);
         Header = _header.AsObservable();
         Observable.Timer(TimeSpan.Zero, TimeSpan.FromSeconds(1), RxSchedulers.MainThreadScheduler)
             .Subscribe(_ => RefreshElapsed())
@@ -359,7 +361,7 @@ public partial class JobDetailViewModel : ReactiveObject, IHaveHeader, IDisposab
         IsStreaming = true;
         PublishHeader();
         var cts = _cts;
-        _ = StreamLogsAsync(cts.Token).ContinueWith(streaming =>
+        _ = StreamLogsAsync(cts.Token).ContinueWith(streaming => RxSchedulers.MainThreadScheduler.Schedule(() =>
         {
             IsStreaming = false;
             CanCancel = false;
@@ -371,7 +373,7 @@ public partial class JobDetailViewModel : ReactiveObject, IHaveHeader, IDisposab
                 var message = streaming.Exception!.GetBaseException().Message;
                 Avalonia.Threading.Dispatcher.UIThread.Post(() => _ = notificationService.Show(message, Maybe.From("Log stream interrupted")));
             }
-        });
+        }));
     }
 
     private async Task StreamLogsAsync(CancellationToken ct)
@@ -529,7 +531,9 @@ public partial class JobDetailViewModel : ReactiveObject, IHaveHeader, IDisposab
         _ => status.ToString()
     };
 
-    private SectionHeader CreateHeader()
+    private SectionHeader CreateHeader() => new(HeaderTitle, HeaderSubtitle, CreateHeaderActions());
+
+    private HeaderAction[] CreateHeaderActions()
     {
         var actions = new List<HeaderAction>();
 
@@ -539,7 +543,7 @@ public partial class JobDetailViewModel : ReactiveObject, IHaveHeader, IDisposab
         actions.Add(new HeaderAction(DetailedLogButtonText, "mdi-text-box-search-outline", ToggleDetailedLogCommand));
         actions.Add(new HeaderAction("Refresh", "mdi-refresh", RefreshCommand));
 
-        return new SectionHeader(HeaderTitle, HeaderSubtitle, actions.ToArray());
+        return actions.ToArray();
     }
 
     private string HeaderTitle => $"{HeaderKind} {HeaderJobName}";
@@ -577,7 +581,17 @@ public partial class JobDetailViewModel : ReactiveObject, IHaveHeader, IDisposab
         if (isDisposed)
             return;
 
-        _header.OnNext(CreateHeader());
+        // Recreating the header rebuilds every button, which drops open tooltips and
+        // in-flight clicks; only do it when the set of actions actually changes.
+        var actions = CreateHeaderActions();
+        if (currentHeader.HasSameActionsAs(actions))
+        {
+            currentHeader.UpdateText(HeaderTitle, HeaderSubtitle);
+            return;
+        }
+
+        currentHeader = new SectionHeader(HeaderTitle, HeaderSubtitle, actions);
+        _header.OnNext(currentHeader);
     }
 
     private static bool IsJobCancelable(DeploymentJob job) =>
