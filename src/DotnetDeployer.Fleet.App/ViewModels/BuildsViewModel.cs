@@ -7,6 +7,8 @@ using System.Reactive.Linq;
 using CSharpFunctionalExtensions;
 using DotnetDeployer.Fleet.Api.Client;
 using DotnetDeployer.Fleet.Core.Domain;
+using DynamicData;
+using DynamicData.Binding;
 using ReactiveUI;
 using ReactiveUI.SourceGenerators;
 using Zafiro.Avalonia.Dialogs;
@@ -30,8 +32,18 @@ public partial class BuildsViewModel : ReactiveObject, IHaveHeader, IDisposable
 
     [Reactive] private bool isLoading;
     [Reactive] private string? error;
+    [Reactive] private string? searchText;
+    [Reactive] private bool hasNoMatches;
+    [Reactive] private bool hasVisibleBuilds;
 
+    private readonly ReadOnlyObservableCollection<JobViewModel> filteredBuilds;
+
+    /// <summary>Every build, newest first.</summary>
     public ObservableCollection<JobViewModel> Builds { get; } = [];
+
+    /// <summary>The builds that match the search, newest first.</summary>
+    public ReadOnlyObservableCollection<JobViewModel> FilteredBuilds => filteredBuilds;
+
     public ListStatus BuildsStatus { get; }
 
     public BuildsViewModel(
@@ -49,6 +61,25 @@ public partial class BuildsViewModel : ReactiveObject, IHaveHeader, IDisposable
         this.notificationService = notificationService;
         BuildsStatus = ListStatus.Of(Builds, this.WhenAnyValue(vm => vm.IsLoading));
         disposables.Add(BuildsStatus);
+
+        var filter = this.WhenAnyValue(vm => vm.SearchText)
+            .Select(text => (Func<JobViewModel, bool>)(build => build.Matches(text)));
+        disposables.Add(Builds.ToObservableChangeSet()
+            .AutoRefresh(build => build.Job)
+            .AutoRefresh(build => build.ProjectName)
+            .Filter(filter)
+            .Sort(SortExpressionComparer<JobViewModel>.Descending(build => build.Job.EnqueuedAt))
+            .Bind(out filteredBuilds)
+            .Subscribe());
+        disposables.Add(Observable.Merge(
+                CollectionChanges.Of(Builds),
+                CollectionChanges.Of(filteredBuilds),
+                this.WhenAnyValue(vm => vm.SearchText).Select(_ => Unit.Default))
+            .Subscribe(_ =>
+            {
+                HasVisibleBuilds = filteredBuilds.Count > 0;
+                HasNoMatches = Builds.Count > 0 && filteredBuilds.Count == 0;
+            }));
 
         RefreshCommand = ReactiveCommand.CreateFromTask(LoadBuilds);
         ClearFinishedJobsCommand = ReactiveCommand.CreateFromTask(ClearFinishedJobs);

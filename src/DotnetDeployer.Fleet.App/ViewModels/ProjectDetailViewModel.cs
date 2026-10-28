@@ -540,7 +540,7 @@ public partial class PackageTargetOptionViewModel : ReactiveObject
     [Reactive] private bool _isSelected;
 }
 
-public partial class JobViewModel : ReactiveObject
+public partial class JobViewModel : ReactiveObject, IOpenable
 {
     private readonly FleetApiClient _client;
     private readonly IConnectedFleetClientContext? clientContext;
@@ -636,6 +636,24 @@ public partial class JobViewModel : ReactiveObject
 
     public string TimestampText => LocalTimestampFormatter.Format(Job.FinishedAt ?? Job.EnqueuedAt);
 
+    /// <summary>When the job ended, or "--" while it has not.</summary>
+    public string FinishedText => LocalTimestampFormatter.Format(Job.FinishedAt);
+
+    /// <summary>
+    /// True when the job matches what the user typed in a list's search box: its project,
+    /// its version or name, or its status. Case is ignored, and empty text matches every job.
+    /// </summary>
+    public bool Matches(string? searchText)
+    {
+        if (string.IsNullOrWhiteSpace(searchText))
+            return true;
+
+        var text = searchText.Trim();
+        return Contains(ProjectName) || Contains(DisplayName) || Contains(Version) || Contains(StatusText);
+
+        bool Contains(string? value) => value?.Contains(text, StringComparison.CurrentCultureIgnoreCase) == true;
+    }
+
     public string? ShortCommitSha => JobNaming.ShortSha(Job.TriggerCommitSha);
 
     /// <summary>
@@ -661,39 +679,23 @@ public partial class JobViewModel : ReactiveObject
         this.RaisePropertyChanged(nameof(KindText));
         this.RaisePropertyChanged(nameof(TimestampLabel));
         this.RaisePropertyChanged(nameof(TimestampText));
+        this.RaisePropertyChanged(nameof(FinishedText));
         this.RaisePropertyChanged(nameof(ShortCommitSha));
         RefreshElapsed();
     }
 
     public void RefreshElapsed() => this.RaisePropertyChanged(nameof(ElapsedText));
 
-    public string StatusText => Job.Status switch
-    {
-        JobStatus.Queued => "Queued",
-        JobStatus.Assigned => "Assigned",
-        JobStatus.Running => "Running",
-        JobStatus.Succeeded => Job.NuGetVerification switch
-        {
-            NuGetVerificationStatus.Pending => "Succeeded · verifying NuGet",
-            NuGetVerificationStatus.Verified => "Succeeded · NuGet verified",
-            _ => "Succeeded"
-        },
-        JobStatus.Failed => "Failed",
-        JobStatus.Cancelled => "Cancelled",
-        JobStatus.AwaitingNuGetIndex => "Waiting for NuGet",
-        _ => Job.Status.ToString()
-    };
+    public string StatusText => JobStatusDisplay.Text(Job.Status, Job.NuGetVerification);
 
     public string KindText => Job.Kind == JobKind.PackageBuild ? "Packages" : "Deploy";
 
-    public IIcon StatusIcon => new Icon(
-        Job.Status == JobStatus.Succeeded && Job.NuGetVerification == NuGetVerificationStatus.Verified
-            ? "mdi-check-decagram"
-            : JobStatusDisplay.IconCode(Job.Status));
+    public IIcon StatusIcon => new Icon(JobStatusDisplay.IconCode(Job.Status, Job.NuGetVerification));
 
     public Tone StatusTone => JobStatusDisplay.Tone(Job.Status);
 
     public ReactiveCommand<System.Reactive.Unit, System.Reactive.Unit> OpenCommand { get; }
+    System.Windows.Input.ICommand IOpenable.OpenCommand => OpenCommand;
 
     private void Open()
     {

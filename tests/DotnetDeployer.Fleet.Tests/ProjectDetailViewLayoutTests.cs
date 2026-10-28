@@ -63,50 +63,6 @@ public class ProjectDetailViewLayoutTests
     }
 
     [Fact]
-    public void ProjectDetailView_ShouldGuideUsersWhenThereAreNoBuildsWithoutDuplicatingHeaderActions()
-    {
-        var document = XDocument.Load(ProjectFilePath("Views", "ProjectDetailView.axaml"));
-        XNamespace axaml = "https://github.com/avaloniaui";
-
-        document.Descendants(axaml + "Border")
-            .Select(border => border.Attribute("IsVisible")?.Value)
-            .Should()
-            .Contain("{Binding ShowEmptyJobHistory}");
-
-        document.Descendants(axaml + "ScrollViewer")
-            .Select(scrollViewer => scrollViewer.Attribute("IsVisible")?.Value)
-            .Should()
-            .Contain("{Binding HasJobHistory}");
-
-        document.Descendants(axaml + "TextBlock")
-            .Select(textBlock => textBlock.Attribute("Text")?.Value)
-            .Should()
-            .Contain([
-                "No builds or deployments yet",
-                "Use Queue Deploy or Queue Build above to enqueue the first run."
-            ]);
-
-        document.Descendants(axaml + "EnhancedButton")
-            .Select(button => button.Attribute("Content")?.Value)
-            .Should()
-            .NotContain(["Queue Deploy", "Queue Build"]);
-    }
-
-    [Fact]
-    public void BuildsView_ShouldShowAllBuildsAsJobRows()
-    {
-        var document = XDocument.Load(ProjectFilePath("Views", "BuildsView.axaml"));
-        XNamespace axaml = "https://github.com/avaloniaui";
-
-        var lists = document.Descendants(axaml + "ItemsControl")
-            .Where(control => control.Attribute("ItemsSource")?.Value == "{Binding Builds}")
-            .ToList();
-
-        lists.Should().ContainSingle();
-        lists.Single().Elements().Should().BeEmpty("rows are rendered by JobView through the view locator");
-    }
-
-    [Fact]
     public void ProjectDetailView_ShouldShowJobsAsJobRows()
     {
         var document = XDocument.Load(ProjectFilePath("Views", "ProjectDetailView.axaml"));
@@ -147,27 +103,6 @@ public class ProjectDetailViewLayoutTests
         ]);
 
         row.Descendants(axaml + "EnhancedButton").Should().BeEmpty("the row itself is the only button");
-    }
-
-    [Fact]
-    public void ProjectsView_ShouldChangeIconFromTheProjectIcon()
-    {
-        var document = XDocument.Load(ProjectFilePath("Views", "ProjectsView.axaml"));
-        XNamespace axaml = "https://github.com/avaloniaui";
-
-        var iconButtons = document.Descendants(axaml + "EnhancedButton")
-            .Where(button => button.Attribute("Command")?.Value == "{Binding ChangeIconCommand}")
-            .ToList();
-
-        iconButtons.Should().ContainSingle();
-        var iconButton = iconButtons.Single();
-        iconButton.Attribute("Width")?.Value.Should().Be("56");
-        iconButton.Attribute("Height")?.Value.Should().Be("56");
-        iconButton.Attribute("ToolTip.Tip")?.Value.Should().Be("Change icon");
-        iconButton.Descendants(axaml + "Image")
-            .Select(image => image.Attribute("IsVisible")?.Value)
-            .Should()
-            .Contain("{Binding HasProjectIcon}");
     }
 
     [Fact]

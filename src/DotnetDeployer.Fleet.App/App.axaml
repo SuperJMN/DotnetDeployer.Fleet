@@ -57,6 +57,11 @@
             <Setter Property="Padding" Value="0" />
         </Style>
 
+        <!-- Table cells line up on the row's centre, whether they show plain text or a template. -->
+        <Style Selector="TableViewCell">
+            <Setter Property="VerticalContentAlignment" Value="Center" />
+        </Style>
+
         <!-- What a list shows instead of its items while it loads or when it has none. -->
         <Style Selector="Border.ListPlaceholder">
             <Setter Property="Background" Value="{DynamicResource SystemControlBackgroundAltHighBrush}" />
