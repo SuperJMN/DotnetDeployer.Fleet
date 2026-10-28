@@ -234,24 +234,8 @@ public sealed class ProjectIconStoreTests : IDisposable
         icon!.Bytes.Should().Equal(1, 2, 3);
     }
 
-    private static void Git(string workingDirectory, params string[] args)
-    {
-        var psi = new System.Diagnostics.ProcessStartInfo("git")
-        {
-            WorkingDirectory = workingDirectory,
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            UseShellExecute = false
-        };
-        foreach (var arg in args)
-            psi.ArgumentList.Add(arg);
-        using var process = System.Diagnostics.Process.Start(psi)!;
-        process.StandardOutput.ReadToEnd();
-        var stderr = process.StandardError.ReadToEnd();
-        process.WaitForExit();
-        if (process.ExitCode != 0)
-            throw new InvalidOperationException($"git {string.Join(" ", args)} failed: {stderr}");
-    }
+    private static void Git(string workingDirectory, params string[] args) =>
+        TestProcess.Run("git", workingDirectory, args).EnsureSuccess();
 
     public void Dispose()
     {

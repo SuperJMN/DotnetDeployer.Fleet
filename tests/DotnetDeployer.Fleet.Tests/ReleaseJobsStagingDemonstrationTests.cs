@@ -1,4 +1,3 @@
-using System.Diagnostics;
 using System.IO.Compression;
 using System.Security.Cryptography;
 using System.Text;
@@ -1091,10 +1090,15 @@ public sealed class ReleaseJobsStagingDemonstrationTests : IDisposable
             {(twoPackages ? "    - project: src/DemoExtra/DemoExtra.csproj" : "")}
             """);
 
-        await RunDotnetCommandAsync(repoDir, "new", "sln", "-n", "Demo");
-        await RunDotnetCommandAsync(repoDir, "sln", "add", "src/DemoLib/DemoLib.csproj", "tests/DemoLibTests/DemoLibTests.csproj");
-        if (twoPackages)
-            await RunDotnetCommandAsync(repoDir, "sln", "add", "src/DemoExtra/DemoExtra.csproj");
+        // The solution is written directly instead of with `dotnet new sln`, so the demo repository
+        // depends only on files this test owns, not on the template cache under the user's home.
+        await File.WriteAllTextAsync(Path.Combine(repoDir, "Demo.slnx"), $"""
+            <Solution>
+              <Project Path="src/DemoLib/DemoLib.csproj" />
+              <Project Path="tests/DemoLibTests/DemoLibTests.csproj" />
+            {(twoPackages ? "  <Project Path=\"src/DemoExtra/DemoExtra.csproj\" />" : "")}
+            </Solution>
+            """);
 
         await RunGitCommandAsync(repoDir, "init", "-b", "main");
         await RunGitCommandAsync(repoDir, "config", "user.email", "test@fleet.local");
@@ -1160,52 +1164,8 @@ public sealed class ReleaseJobsStagingDemonstrationTests : IDisposable
 
     private static async Task<string> RunGitCommandAsync(string workingDir, params string[] args)
     {
-        var psi = new ProcessStartInfo("git")
-        {
-            WorkingDirectory = workingDir,
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            UseShellExecute = false
-        };
-        foreach (var arg in args)
-            psi.ArgumentList.Add(arg);
-
-        using var process = Process.Start(psi)
-            ?? throw new InvalidOperationException($"Failed to start git with args {string.Join(" ", args)}");
-
-        var stdoutTask = process.StandardOutput.ReadToEndAsync();
-        var stderrTask = process.StandardError.ReadToEndAsync();
-        await process.WaitForExitAsync();
-        var stdout = await stdoutTask;
-        var stderr = await stderrTask;
-
-        if (process.ExitCode != 0)
-            throw new InvalidOperationException($"git {string.Join(" ", args)} failed (code {process.ExitCode}): {stderr}");
-
-        return stdout.Trim();
-    }
-
-    private static async Task RunDotnetCommandAsync(string workingDir, params string[] args)
-    {
-        var psi = new ProcessStartInfo("dotnet")
-        {
-            WorkingDirectory = workingDir,
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            UseShellExecute = false
-        };
-        foreach (var arg in args)
-            psi.ArgumentList.Add(arg);
-
-        using var process = Process.Start(psi)
-            ?? throw new InvalidOperationException($"Failed to start dotnet with args {string.Join(" ", args)}");
-
-        await process.WaitForExitAsync();
-        if (process.ExitCode != 0)
-        {
-            var err = await process.StandardError.ReadToEndAsync();
-            throw new InvalidOperationException($"dotnet {string.Join(" ", args)} failed (code {process.ExitCode}): {err}");
-        }
+        var result = await TestProcess.RunAsync("git", workingDir, args);
+        return result.EnsureSuccess().StandardOutput.Trim();
     }
 
     internal sealed class InlineFactory(DbContextOptions<FleetDbContext> options) : IDbContextFactory<FleetDbContext>

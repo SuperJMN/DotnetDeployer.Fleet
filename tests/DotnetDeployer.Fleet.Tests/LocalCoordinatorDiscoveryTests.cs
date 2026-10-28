@@ -3,6 +3,12 @@ using DotnetDeployer.Fleet.Tooling;
 
 namespace DotnetDeployer.Fleet.Tests;
 
+/// <remarks>
+/// These tests point HOME at a temporary directory that is deleted afterwards. Every child process
+/// started meanwhile by another test (dotnet, git, NuGet) would inherit that HOME and fail, so they
+/// run alone in <see cref="ProcessEnvironmentCollection"/>.
+/// </remarks>
+[Collection(ProcessEnvironmentCollection.Name)]
 public class LocalCoordinatorDiscoveryTests : IDisposable
 {
     private readonly string tempRoot;

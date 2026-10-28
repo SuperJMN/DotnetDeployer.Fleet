@@ -261,11 +261,7 @@ public sealed class NuGetPackagePusherConflictTests : IDisposable
         var pkgPath = Path.Combine(workDir, "MyRealHttpPkg.1.0.0.nupkg");
         await File.WriteAllBytesAsync(pkgPath, [1, 2, 3, 4, 5]);
 
-        var listener = new System.Net.HttpListener();
-        int port = GetAvailableTcpPort();
-        var baseUri = $"http://127.0.0.1:{port}/";
-        listener.Prefixes.Add(baseUri);
-        listener.Start();
+        var (listener, baseUri) = StartLoopbackListener();
 
         using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(15));
 
@@ -332,9 +328,10 @@ public sealed class NuGetPackagePusherConflictTests : IDisposable
                 line => { lines.Add(line); return Task.CompletedTask; },
                 cts.Token);
 
-            result.Success.Should().BeFalse("remote feed returned 409 Conflict without --skip-duplicate");
-            result.Error.Should().NotBeNull();
-            result.Error.Should().Match(e => e.Contains("409") || e.Contains("Conflict"));
+            var pushOutput = string.Join(Environment.NewLine, lines);
+            result.Success.Should().BeFalse($"remote feed returned 409 Conflict without --skip-duplicate. dotnet nuget push output:{Environment.NewLine}{pushOutput}");
+            result.Error.Should().NotBeNull(pushOutput);
+            result.Error.Should().Match(e => e.Contains("409") || e.Contains("Conflict"), $"dotnet nuget push output:{Environment.NewLine}{pushOutput}");
         }
         finally
         {
@@ -342,6 +339,30 @@ public sealed class NuGetPackagePusherConflictTests : IDisposable
             try { listener.Stop(); } catch { }
             try { listener.Close(); } catch { }
             try { await listenerTask; } catch { }
+        }
+    }
+
+    /// <summary>
+    /// HttpListener cannot bind port 0, so a free port is picked first. Another test or process can
+    /// take that port before the listener binds it; in that case another free port is tried.
+    /// </summary>
+    private static (System.Net.HttpListener Listener, string BaseUri) StartLoopbackListener()
+    {
+        const int attempts = 10;
+        for (var attempt = 1; ; attempt++)
+        {
+            var baseUri = $"http://127.0.0.1:{GetAvailableTcpPort()}/";
+            var listener = new System.Net.HttpListener();
+            listener.Prefixes.Add(baseUri);
+            try
+            {
+                listener.Start();
+                return (listener, baseUri);
+            }
+            catch (System.Net.HttpListenerException) when (attempt < attempts)
+            {
+                listener.Close();
+            }
         }
     }
 

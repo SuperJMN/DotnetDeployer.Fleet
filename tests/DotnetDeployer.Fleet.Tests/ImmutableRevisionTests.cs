@@ -315,23 +315,8 @@ public sealed class ImmutableRevisionTests : IDisposable
         return path;
     }
 
-    private static string RunGit(string workingDirectory, string args)
-    {
-        var psi = new ProcessStartInfo("git", args)
-        {
-            WorkingDirectory = workingDirectory,
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            UseShellExecute = false
-        };
-        using var process = Process.Start(psi)!;
-        var stdout = process.StandardOutput.ReadToEnd();
-        process.WaitForExit();
-        if (process.ExitCode != 0)
-        {
-            var stderr = process.StandardError.ReadToEnd();
-            throw new InvalidOperationException($"git {args} failed ({process.ExitCode}): {stderr}");
-        }
-        return stdout;
-    }
+    private static string RunGit(string workingDirectory, string args) =>
+        TestProcess.Run(new ProcessStartInfo("git", args) { WorkingDirectory = workingDirectory })
+            .EnsureSuccess()
+            .StandardOutput;
 }

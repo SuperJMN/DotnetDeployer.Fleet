@@ -203,42 +203,27 @@ public sealed class SolutionBuildRunnerTests : IDisposable
             }
             """);
 
-        // Create solution
-        var psiNewSln = new ProcessStartInfo("dotnet", ["new", "sln", "-n", "Reproduce26", "-o", repositoryRoot])
-        {
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            UseShellExecute = false
-        };
-        using (var p = Process.Start(psiNewSln)!)
-        {
-            await p.WaitForExitAsync();
-            p.ExitCode.Should().Be(0);
-        }
-
-        var slnPath = Directory.GetFiles(repositoryRoot, "Reproduce26.*")
-            .First(f => f.EndsWith(".sln", StringComparison.OrdinalIgnoreCase) || f.EndsWith(".slnx", StringComparison.OrdinalIgnoreCase));
-
-        var psiAdd = new ProcessStartInfo("dotnet", [
-            "sln", slnPath, "add",
-            Path.Combine(brokenLibDir, "BrokenLib.csproj"),
-            Path.Combine(testDir, "UnitTests.csproj")
-        ])
-        {
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            UseShellExecute = false
-        };
-        using (var p = Process.Start(psiAdd)!)
-        {
-            await p.WaitForExitAsync();
-            p.ExitCode.Should().Be(0);
-        }
+        // The solution is written directly: it does not depend on the template engine or other
+        // shared state under the user's home, only on what this test puts in its own directory.
+        File.WriteAllText(Path.Combine(repositoryRoot, "Reproduce26.slnx"), """
+            <Solution>
+              <Project Path="src/BrokenLib/BrokenLib.csproj" />
+              <Project Path="tests/UnitTests/UnitTests.csproj" />
+            </Solution>
+            """);
 
         // dotnet build builds every project in the solution, not only the tests and their references.
-        var buildResult = await SolutionBuildRunner.RunAsync(repositoryRoot, _ => Task.CompletedTask);
-        buildResult.Success.Should().BeFalse("dotnet build must fail because BrokenLib fails compilation");
-        buildResult.Error.Should().Contain("dotnet build exited with code 1");
+        var output = new List<string>();
+        var buildResult = await SolutionBuildRunner.RunAsync(repositoryRoot, line =>
+        {
+            lock (output) output.Add(line);
+            return Task.CompletedTask;
+        });
+
+        var buildLog = string.Join(Environment.NewLine, output);
+        buildResult.Success.Should().BeFalse($"dotnet build must fail because BrokenLib fails compilation. Build output:{Environment.NewLine}{buildLog}");
+        buildResult.Error.Should().Contain("dotnet build exited with code 1", $"the build must reach compilation and fail there. Build output:{Environment.NewLine}{buildLog}");
+        buildLog.Should().Contain("BrokenLib", "the compilation error comes from the broken project");
     }
 
     public void Dispose()

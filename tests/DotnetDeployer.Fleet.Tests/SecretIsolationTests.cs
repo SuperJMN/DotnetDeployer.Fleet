@@ -5,6 +5,11 @@ using FluentAssertions;
 
 namespace DotnetDeployer.Fleet.Tests;
 
+/// <remarks>
+/// Some of these tests set ambient secrets on the test host's own environment, which every child
+/// process started meanwhile would inherit, so they run alone in <see cref="ProcessEnvironmentCollection"/>.
+/// </remarks>
+[Collection(ProcessEnvironmentCollection.Name)]
 public sealed class SecretIsolationTests
 {
     [Fact]
@@ -252,11 +257,9 @@ public sealed class SecretIsolationTests
             foreach (var (k, v) in envVars)
                 psi.Environment[k] = v;
 
-            using var process = Process.Start(psi)!;
-            var output = await process.StandardOutput.ReadToEndAsync();
-            await process.WaitForExitAsync();
-
-            process.ExitCode.Should().Be(0);
+            var result = await TestProcess.RunAsync(psi);
+            result.ExitCode.Should().Be(0, result.Report);
+            var output = result.StandardOutput;
 
             // Verify: sentinel ambient publish secrets are NOT present in the child process output
             output.Should().NotContain(sentinelAmbientNuget);
@@ -329,11 +332,10 @@ public sealed class SecretIsolationTests
             foreach (var (k, v) in testEnvVars)
                 testPsi.Environment[k] = v;
 
-            using (var testProc = Process.Start(testPsi)!)
             {
-                var testOutput = await testProc.StandardOutput.ReadToEndAsync();
-                await testProc.WaitForExitAsync();
-                testProc.ExitCode.Should().Be(0);
+                var testResult = await TestProcess.RunAsync(testPsi);
+                testResult.ExitCode.Should().Be(0, testResult.Report);
+                var testOutput = testResult.StandardOutput;
 
                 // Tests MUST NOT receive push tokens
                 testOutput.Should().NotContain(sentinelPushNuget);
@@ -373,11 +375,10 @@ public sealed class SecretIsolationTests
             foreach (var (k, v) in packEnvVars)
                 packPsi.Environment[k] = v;
 
-            using (var packProc = Process.Start(packPsi)!)
             {
-                var packOutput = await packProc.StandardOutput.ReadToEndAsync();
-                await packProc.WaitForExitAsync();
-                packProc.ExitCode.Should().Be(0);
+                var packResult = await TestProcess.RunAsync(packPsi);
+                packResult.ExitCode.Should().Be(0, packResult.Report);
+                var packOutput = packResult.StandardOutput;
 
                 // Pack MUST NOT receive push tokens
                 packOutput.Should().NotContain(sentinelPushNuget);
