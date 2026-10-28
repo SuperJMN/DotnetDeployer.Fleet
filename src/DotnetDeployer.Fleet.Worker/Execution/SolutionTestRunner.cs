@@ -111,7 +111,7 @@ internal static class SolutionTestRunner
         {
             var test = DeployerRunner.CreateDotnetProcessStartInfo(
                 workingDirectory,
-                ["test", solution.Path, "-c", "Release", "--nologo", "-m:1"],
+                ["test", solution.Path, "-c", "Release", "--nologo", "--no-build"],
                 envVars,
                 scrubKeys);
 

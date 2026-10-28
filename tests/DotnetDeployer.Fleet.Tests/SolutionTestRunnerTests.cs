@@ -101,7 +101,7 @@ public sealed class SolutionTestRunnerTests : IDisposable
             "dnx", "dotnetdeployer.tool", "-y", "prepare", "--directory", repositoryRoot);
         processRunner.Commands[1].Arguments.Should().Equal("workload", "restore", solution);
         processRunner.Commands[2].Arguments.Should().Equal(
-            "test", solution, "-c", "Release", "--nologo", "-m:1");
+            "test", solution, "-c", "Release", "--nologo", "--no-build");
         processRunner.Commands.Should().OnlyContain(command => command.WorkingDirectory == repositoryRoot);
         processRunner.Commands.Should().OnlyContain(command => command.Environment["DEPLOY_TOKEN"] == "secret-value");
         processRunner.Commands.Should().OnlyContain(command => command.Environment["UseSharedCompilation"] == "false");

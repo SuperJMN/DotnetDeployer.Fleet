@@ -151,7 +151,7 @@ public sealed class SolutionBuildRunnerTests : IDisposable
     }
 
     [Fact]
-    public async Task Non_test_project_compilation_failure_is_caught_by_build_gate_where_test_runner_would_pass()
+    public async Task Non_test_project_compilation_failure_fails_the_build_gate()
     {
         // Reproduce issue #26:
         // A solution with:
@@ -235,14 +235,7 @@ public sealed class SolutionBuildRunnerTests : IDisposable
             p.ExitCode.Should().Be(0);
         }
 
-        // 1. SolutionTestRunner runs `dotnet test Reproduce26.sln -c Release --nologo -m:1`
-        // Because dotnet test only builds test projects and their project references by default,
-        // BrokenLib is skipped, and dotnet test exits with 0!
-        var testResult = await SolutionTestRunner.RunAsync(repositoryRoot, _ => Task.CompletedTask);
-        testResult.Success.Should().BeTrue("dotnet test returns 0 because BrokenLib is not referenced by tests");
-
-        // 2. SolutionBuildRunner runs `dotnet build Reproduce26.sln -c Release --nologo`
-        // dotnet build builds all projects in the solution and FAILS with exit code 1!
+        // dotnet build builds every project in the solution, not only the tests and their references.
         var buildResult = await SolutionBuildRunner.RunAsync(repositoryRoot, _ => Task.CompletedTask);
         buildResult.Success.Should().BeFalse("dotnet build must fail because BrokenLib fails compilation");
         buildResult.Error.Should().Contain("dotnet build exited with code 1");
