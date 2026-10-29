@@ -151,6 +151,7 @@ public class RemoteWorkerBackgroundService : BackgroundService
     internal async Task ExecuteJobAsync(DeploymentJob job, CancellationToken ct)
     {
         Directory.CreateDirectory(repoStoragePath);
+        repoStoragePath = PhysicalPath.Of(repoStoragePath);
         RepoStorageIsolator.EnsureBarrierFiles(repoStoragePath);
 
         logger.LogInformation("Starting job {JobId} for project {ProjectId}", job.Id, job.ProjectId);
