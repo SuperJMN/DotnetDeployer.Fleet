@@ -42,7 +42,7 @@
                    IsVisible="{Binding Error, Converter={x:Static ObjectConverters.IsNotNull}}" />
 
         <ProgressBar DockPanel.Dock="Top"
-                     IsIndeterminate="True"
+                     IsIndeterminate="{Binding IsLoading}"
                      IsVisible="{Binding IsLoading}"
                      Height="4"
                      Margin="0,0,0,8" />

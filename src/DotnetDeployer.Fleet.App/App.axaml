@@ -86,10 +86,14 @@
         <Style Selector="Border.ListPlaceholder TextBlock.Hint">
             <Setter Property="Opacity" Value="0.7" />
         </Style>
+        <!-- An indeterminate bar keeps animating after it is hidden, which keeps the UI thread busy
+             (enough for a slow Android TV to stop answering). Animate it only while its placeholder shows. -->
         <Style Selector="Border.ListPlaceholder ProgressBar">
-            <Setter Property="IsIndeterminate" Value="True" />
             <Setter Property="Width" Value="200" />
             <Setter Property="HorizontalAlignment" Value="Center" />
+        </Style>
+        <Style Selector="Border.ListPlaceholder[IsVisible=True] ProgressBar">
+            <Setter Property="IsIndeterminate" Value="True" />
         </Style>
     </Application.Styles>
 

@@ -59,7 +59,7 @@
         </FlexPanel>
 
         <!-- Loading indicator -->
-        <ProgressBar DockPanel.Dock="Top" IsIndeterminate="True"
+        <ProgressBar DockPanel.Dock="Top" IsIndeterminate="{Binding IsLoading}"
                      IsVisible="{Binding IsLoading}" Height="4" Margin="0,0,0,8" />
 
         <Border DockPanel.Dock="Top" Classes="ListPlaceholder" IsVisible="{Binding ProjectsStatus.IsLoadingFirstItems}">
