@@ -174,7 +174,7 @@
                         <StackPanel Spacing="8"
                                     HorizontalAlignment="Left"
                                     IsVisible="{Binding IsLoadingPhases}">
-                            <ProgressBar IsIndeterminate="True" Width="200" />
+                            <ProgressBar IsIndeterminate="{Binding IsLoadingPhases}" Width="200" />
                             <TextBlock Text="Loading phases…" Opacity="0.6" />
                         </StackPanel>
                         <TextBlock Text="No phase events yet."

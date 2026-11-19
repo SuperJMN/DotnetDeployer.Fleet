@@ -49,7 +49,7 @@
                  AutomationProperties.Name="Search builds" />
 
         <ProgressBar DockPanel.Dock="Top"
-                     IsIndeterminate="True"
+                     IsIndeterminate="{Binding IsLoading}"
                      IsVisible="{Binding IsLoading}"
                      Height="4"
                      Margin="0,0,0,8" />

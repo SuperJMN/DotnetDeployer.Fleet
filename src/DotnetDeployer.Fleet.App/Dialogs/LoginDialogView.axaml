@@ -15,7 +15,7 @@
                  PasswordChar="●"
                  IsEnabled="{Binding !IsBusy}" />
 
-        <ProgressBar IsIndeterminate="True" Height="4"
+        <ProgressBar IsIndeterminate="{Binding IsBusy}" Height="4"
                      IsVisible="{Binding IsBusy}" />
 
         <TextBlock Text="{Binding Error}"
