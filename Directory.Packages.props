@@ -25,10 +25,10 @@
     <PackageVersion Include="Zafiro.Avalonia.Mcp.AppHost" Version="0.0.60" />
     <PackageVersion Include="Xaml.Behaviors.Avalonia" Version="12.0.0" />
     <!-- Zafiro -->
-    <PackageVersion Include="Zafiro.Avalonia" Version="53.4.0" />
-    <PackageVersion Include="Zafiro.Avalonia.Generators" Version="53.4.0" />
-    <PackageVersion Include="Zafiro.Avalonia.Dialogs" Version="53.4.0" />
-    <PackageVersion Include="Zafiro.Avalonia.Icons.Optris" Version="53.4.0" />
+    <PackageVersion Include="Zafiro.Avalonia" Version="53.4.1" />
+    <PackageVersion Include="Zafiro.Avalonia.Generators" Version="53.4.1" />
+    <PackageVersion Include="Zafiro.Avalonia.Dialogs" Version="53.4.1" />
+    <PackageVersion Include="Zafiro.Avalonia.Icons.Optris" Version="53.4.1" />
     <PackageVersion Include="Zafiro.UI" Version="47.1.1" />
     <!-- ReactiveUI -->
     <PackageVersion Include="ReactiveUI" Version="23.2.28" />
