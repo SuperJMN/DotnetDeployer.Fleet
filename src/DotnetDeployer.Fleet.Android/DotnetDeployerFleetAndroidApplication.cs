@@ -3,6 +3,7 @@ using Android.Runtime;
 using Avalonia;
 using Avalonia.Android;
 using ReactiveUI.Avalonia;
+using Zafiro.Avalonia.Mcp.AppHost;
 
 namespace DotnetDeployer.Fleet.Android;
 
@@ -19,6 +20,7 @@ public class DotnetDeployerFleetAndroidApplication : AvaloniaAndroidApplication<
         return base.CustomizeAppBuilder(builder)
             .UseReactiveUI(_ => { })
             .WithInterFont()
+            .UseMcpDiagnostics()
             .LogToTrace();
     }
 }
