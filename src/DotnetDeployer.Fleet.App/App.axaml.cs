@@ -9,6 +9,7 @@ using DotnetDeployer.Fleet.App.Dialogs;
 using DotnetDeployer.Fleet.App.Shell;
 using DotnetDeployer.Fleet.App.Theming;
 using DotnetDeployer.Fleet.App.ViewModels;
+using DotnetDeployer.Fleet.App.Views;
 using Microsoft.Extensions.DependencyInjection;
 using Serilog;
 using Zafiro.Avalonia.Dialogs;
@@ -30,6 +31,7 @@ public class App : Application
     public override void OnFrameworkInitializationCompleted()
     {
         IconControlProviderRegistry.Register(new OptrisIconControlProvider(), asDefault: true);
+        MenuItemSpaceActivation.Register();
 
         var logger = new LoggerConfiguration()
             .WriteTo.Console()
